@@ -1,4 +1,4 @@
-"""Assemble Data S2 (whole proteome): a contents index + six flat sheets.
+"""Assemble Data S2 (whole proteome): a contents index + seven flat sheets.
 
   S2-1 Unenriched proteomics  per protein: per-replicate abundances, per-stimulus-vs-M0 stats,
                               functional-category flags.
@@ -9,9 +9,13 @@
                               reactivity, and phospho analyses, tagged with dataset/background.
   S2-6 GSEA of PC loadings    per significant GO:BP term: pre-ranked GSEA of the whole-proteome
                               PCA loadings, one block per principal component.
+  S2-7 Phosphoproteomics      per phosphosite: expression-normalized per-replicate ratios,
+                              TLR4-vs-M0 stats, and UniProt function.
 
 Run after wp_downstream_analysis.ipynb has generated the volcano/wp_vs_rnaseq/GSEA tables and
 the three visualization .Rmd files have written their go_enrich() CSVs (see the S2-5 loaders).
+S2-7 additionally needs phosphoproteomics.ipynb to have written the expression-normalized
+phosphorylation table to the manuscript tree (see PHOSPHO_TABLE_CSV).
 
     conda run -n polars python whole_proteome/build_data_s2.py
 """
@@ -228,6 +232,52 @@ GSEA_DESCRIPTION = (
     "PCA, against the GO biological process gene sets of the 2026 MSigDB. A positive NES marks a "
     "term enriched at the positive end of that principal component. Only significant terms "
     "(FDR q-value < 0.01) are shown."
+)
+
+# --- S2-7: expression-normalized phosphoproteomics -----------------------------------------
+# Written by phosphoproteomics.ipynb: median-normalized channel ratios divided by that protein's
+# whole-proteome fold change (an inner join on uniprot/condition, which is what trims 11,690
+# sites to 9,591), then an unpaired t-test of all TLR4 channels vs all M0 channels. This is the
+# file rc_visualization.Rmd and the Figure 3 panels read. NOT the sibling `_annotated.csv` (same
+# data plus three figure-specific GO flags, written by reactivity_polars.ipynb) and NOT the
+# repo's gitignored normalized_phosphorylation_table.csv.
+PHOSPHO_TABLE_CSV = (
+    PROTEOMICS
+    / "05_phosphoproteomics/processed_results"
+    / "expression-normalized_phosphorylation_table.csv"
+)
+# Phospho has no adjusted p-value, so STAT_METRICS (which lists -log10_pval_adj) is not reused.
+PHOSPHO_STAT_METRICS = ["log2_FC", "FC", "p_value", "-log10_pval", "Regulation"]
+PHOSPHO_LEAD_COLS = [
+    "uniprot",
+    "protein",
+    "residue",
+    "sequence",
+    "description",
+    "uniprot_function",
+]
+# "<metric>_phospho - TLR4 vs. M0 (N Residues)" -> ("<metric>", "TLR4 vs. M0"). The trailing
+# residue count shifts whenever the table is regenerated, so it is parsed off, mirroring
+# _STAT_SUFFIX. `index_phospho` (a reset_index artifact) drops out: "index" is not a metric.
+_PHOSPHO_STAT_SUFFIX = re.compile(r"^(?P<metric>.+?)_phospho - (?P<comp>.+? vs\. M0)")
+# 4 donors (d1, d2, d3, d5) x 3 technical replicates x 2 conditions.
+_PHOSPHO_CHANNEL = re.compile(r"^(M0|TLR4)_d\d+_\d+$")
+
+PHOSPHO_SHEET_NAME = "S2-7 Phosphoproteomics"
+PHOSPHO_TITLE = (
+    "Expression-normalized phosphoproteomics data from M0 and LPS stimulated macrophages "
+    "(related to Figure 3 and Extended Data Fig. 4 and 5)"
+)
+PHOSPHO_DESCRIPTION = (
+    "Phosphosite quantification in macrophages stimulated with LPS (TLR4) compared to M0 "
+    "macrophages. Per-replicate channel ratios were normalized to protein expression by dividing "
+    "each phosphosite's channel ratio by that protein's whole proteome fold change, so changes "
+    "reflect phosphorylation rather than protein abundance; phosphosites on proteins without "
+    "whole proteome coverage are not reported. Data are from n = 4 donors x 3 technical "
+    "replicates, restricted to phosphosites quantified in at least 2 donors. Significance is an "
+    "unpaired two-sample t-test of all TLR4 channels against all M0 channels; p-values are raw "
+    "and are not corrected for multiple testing. 'Regulation' marks a phosphosite Significant Up "
+    "or Significant Down at p < 0.05 and a fold change greater than 2."
 )
 
 
@@ -560,6 +610,38 @@ def build_pc_gsea():
     return pd.concat(blocks, ignore_index=True)
 
 
+def build_phospho():
+    """S2-7: per phosphosite identifiers + UniProt function + TLR4-vs-M0 stats + channels."""
+    path = require(
+        PHOSPHO_TABLE_CSV,
+        "Run phosphoproteomics/phosphoproteomics.ipynb first to generate it "
+        "(the expression-normalization and volcano cells).",
+    )
+    df = pd.read_csv(path)
+
+    rename = {}
+    for col in df.columns:
+        m = _PHOSPHO_STAT_SUFFIX.match(col)
+        if m and m.group("metric") in PHOSPHO_STAT_METRICS:
+            rename[col] = f'{m.group("comp").replace("vs.", "vs")} {m.group("metric")}'
+    # Metric order follows PHOSPHO_STAT_METRICS, not the source column order.
+    stats = [
+        c
+        for metric in PHOSPHO_STAT_METRICS
+        for c in rename
+        if rename[c].endswith(f" {metric}")
+    ]
+    channels = sorted(c for c in df.columns if _PHOSPHO_CHANNEL.match(c))
+
+    # ID (redundant with protein+residue, and stale with respect to the sorted residue column)
+    # and identifier (redundant with uniprot+protein+description+residue+sequence) are dropped.
+    cols = PHOSPHO_LEAD_COLS + stats + channels
+    missing = [c for c in cols if c not in df.columns]
+    if missing:
+        sys.exit(f"ERROR: phospho table missing expected columns: {missing}")
+    return df[cols].rename(columns=rename)
+
+
 def main():
     sheets = [
         SuppSheet(1, WP_SHEET_NAME, WP_TITLE, WP_DESCRIPTION, build_whole_proteome()),
@@ -568,6 +650,9 @@ def main():
         SuppSheet(4, IPMS_SHEET_NAME, IPMS_TITLE, IPMS_DESCRIPTION, build_ipms()),
         SuppSheet(5, GO_SHEET_NAME, GO_TITLE, GO_DESCRIPTION, build_go_enrichment()),
         SuppSheet(6, GSEA_SHEET_NAME, GSEA_TITLE, GSEA_DESCRIPTION, build_pc_gsea()),
+        SuppSheet(
+            7, PHOSPHO_SHEET_NAME, PHOSPHO_TITLE, PHOSPHO_DESCRIPTION, build_phospho()
+        ),
     ]
     write_supplementary_workbook(OUTPUT_XLSX, sheets)
     print(f"Wrote {OUTPUT_XLSX}")
