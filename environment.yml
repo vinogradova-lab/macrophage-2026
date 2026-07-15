@@ -1,0 +1,39 @@
+name: polars
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.13.2
+  - pip
+  - pip:
+      # dataframes / numerics
+      - polars==1.24.0
+      - pandas==2.2.3
+      - numpy==2.2.3
+      - pyarrow==19.0.1
+      - scipy==1.17.1
+      - scikit-learn==1.7.0
+      - statsmodels==0.14.4
+      # plotting
+      - matplotlib==3.10.1
+      - matplotlib-venn==1.1.2
+      - seaborn==0.13.2
+      - plotly==6.1.0
+      - plotnine==0.14.5
+      - kaleido==1.1.0
+      # bioinformatics / annotation
+      - biopython==1.85
+      - unipressed==1.4.0
+      - gseapy==1.1.9
+      # excel I/O (polars read_excel / write_excel)
+      - openpyxl==3.1.5
+      - fastexcel==0.14.0
+      - xlsx2csv==0.8.4
+      - XlsxWriter==3.2.2
+      # notebook kernel
+      - ipykernel==6.29.5
+      # strip notebook outputs on commit (see .gitattributes)
+      - nbstripout==0.9.1
+      # local shared package (src/uniprot_utils.py, src/peptide_funcs.py)
+      - -e .

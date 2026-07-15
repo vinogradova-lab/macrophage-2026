@@ -1,0 +1,484 @@
+## Prepare RNA data for GSEA
+
+```{r}
+'/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/counts.tsv' %>% 
+  read_delim() -> df
+df %>% colnames() -> l
+df <- df[l[!grepl("TZ3_43", l)]]
+df[df == 0] <- NA
+df[sapply(df, is.infinite)] <- NA
+df %>% drop_na() -> df
+df$sum <- df %>% column_to_rownames("gene.id") %>% rowSums()
+df %>% filter(sum >= 2000) %>% 
+select(-c("sum")) %>% 
+write_delim("/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/unnormalized_counts_filtered.txt", delim="\t")
+```
+
+
+## GSEA
+
+```{r}
+library(tidyverse)
+conditions <- c("TLR1-2", "TLR3", "TLR4", "TLR7", "TLR8", "STING")
+collect_metadata <- function(gsea_results_dir, conditions){
+  l <- list.dirs(gsea_results_dir, recursive = FALSE)
+  metadata <- list()
+  # Collect filepaths by searching folder names. 
+  # Each GSEA results folder should start with the condition
+  for (condition in conditions){
+    metadata[condition] <- l[grepl(condition, l)][1]
+  } 
+  return(metadata)
+}
+
+get_edb_obj <- function(path, gene.set, class.name, metric.range,
+                       enrichment.score.range){
+  ## Load .rnk data
+  path.rnk <- list.files(path = file.path(path, "edb"),
+                         pattern = ".rnk$", full.names = TRUE)
+  gsea.rnk <- read.delim(file = path.rnk, header = FALSE)
+  colnames(gsea.rnk) <- c("hgnc.symbol", "metric")
+  if (missing(metric.range)) {
+    metric.range <- c(min(gsea.rnk$metric), max(gsea.rnk$metric))
+  }  
+  
+  ## Load .edb data
+  path.edb <- list.files(path = file.path(path, "edb"),
+                         pattern = ".edb$", full.names = TRUE)
+  gsea.edb <- read.delim(file = path.edb,
+                         header = FALSE, stringsAsFactors = FALSE)
+  gsea.edb <- unlist(gsea.edb)
+  gsea.metric <- gsea.edb[grep("METRIC=", gsea.edb)]
+  gsea.metric <- unlist(strsplit(gsea.metric, " "))
+  gsea.metric <- gsea.metric[grep("METRIC=", gsea.metric)]
+  gsea.metric <- gsub("METRIC=", "", gsea.metric)
+  gsea.edb <- gsea.edb[grep("<DTG", gsea.edb)]
+  
+  # Select the right gene set
+  if (length(gsea.edb) == 0) {
+    stop(paste("The gene set name was not found, please provide",
+               "a correct name"))
+  }
+  if (length(grep(paste0(gsub(".\\$(.*$)", "\\1", gene.set), " "), gsea.edb)) > 1) {
+    warning(paste("More than 1 gene set matched the gene.set",
+                  "argument; the first match is plotted"))
+  }
+  gsea.edb <- gsea.edb[grep(paste0(gsub(".\\$(.*$)", "\\1", gene.set), " "), gsea.edb)[1]]
+  
+  # Get template name
+  gsea.edb <- gsub(".*TEMPLATE=(.*)", "\\1", gsea.edb)
+  gsea.edb <- unlist(strsplit(gsea.edb, " "))
+  gsea.template <- gsea.edb[1]
+  
+  # Get gene set name
+  gsea.gene.set <- gsea.edb[2]
+  gsea.gene.set <- gsub("GENESET=gene_sets.gmt#", "", gsea.gene.set)
+  
+  # Get enrichment score
+  gsea.enrichment.score <- gsea.edb[3]
+  gsea.enrichment.score <- gsub("ES=", "", gsea.enrichment.score)
+  
+  # Get gene set name
+  gsea.normalized.enrichment.score <- gsea.edb[4]
+  gsea.normalized.enrichment.score <- gsub("NES=", "",
+                                           gsea.normalized.enrichment.score)
+  
+  # Get nominal p-value
+  gsea.p.value <- gsea.edb[5]
+  gsea.p.value <- gsub("NP=", "", gsea.p.value)
+  gsea.p.value <- as.numeric(gsea.p.value)
+  
+  # Get FDR
+  gsea.fdr <- gsea.edb[6]
+  gsea.fdr <- gsub("FDR=", "", gsea.fdr)
+  gsea.fdr <- as.numeric(gsea.fdr)
+  
+  # Get hit indices
+  gsea.edb <- gsea.edb[grep("HIT_INDICES=", gsea.edb):length(gsea.edb)]
+  gsea.hit.indices <- gsea.edb[seq_len(grep("ES_PROFILE=", gsea.edb) - 1)]
+  gsea.hit.indices <- gsub("HIT_INDICES=", "", gsea.hit.indices)
+  gsea.hit.indices <- as.integer(gsea.hit.indices)
+  
+  # Get ES profile
+  gsea.edb <- gsea.edb[grep("ES_PROFILE=", gsea.edb):length(gsea.edb)]
+  gsea.es.profile <- gsea.edb[seq_len(grep("RANK_AT_ES=", gsea.edb) - 1)]
+  gsea.es.profile <- gsub("ES_PROFILE=", "", gsea.es.profile)
+  gsea.es.profile <- as.numeric(gsea.es.profile)
+  edb <- list("hit_indices" = gsea.hit.indices,"es_profile" = gsea.es.profile) %>% as.data.frame()
+  edb$nes <- gsea.normalized.enrichment.score
+  edb$p_value <- gsea.p.value
+  return(edb)
+}
+
+get_nes <- function(df, c){
+  nes <- df %>% filter(condition == c) %>% pull("nes")
+  return(nes[1])
+}
+
+get_p_val <- function(df, c){
+  pval <- df %>% filter(condition == c) %>% pull("p_value")
+  pval <- pval[1] 
+  if (pval < 0.001){
+    return("<0.001")
+  } else{
+    return (
+      paste0("=", as.character(round(pval, digits = 3)))
+    )
+  }
+}
+
+
+plot_gsea <- function(
+  gsea_results_dir,
+  conditions,
+  gene_list_name){
+  metadata <- collect_metadata(gsea_results_dir, conditions) 
+  path.rnk <- list.files(path = file.path(metadata[3], "edb"),
+                       pattern = ".rnk$", full.names = TRUE)
+  gsea.rnk <- read.delim(file = path.rnk, header = FALSE)
+  
+  df <- NULL
+  for (name in names(metadata)){
+    c_edb <- get_edb_obj(
+      path = metadata[name],gene.set=gene_list_name,)
+    c_edb$condition <- name
+    df = rbind(df, c_edb)
+  }
+  # define y position of hit indices for each condition
+df %>% 
+  mutate(condition = factor(df$condition, conditions),
+         y_pos = as.numeric(condition) - 1) -> df
+
+# define plot dimensions
+es_min <- min(df$es_profile) * 1.2
+es_min <- -0.16488
+tick_height = 0.1
+x_max <- nrow(gsea.rnk)
+y_min <- es_min - length(conditions) * tick_height
+y_max <- max(df$es_profile)  * 1.2
+y_max <- 1
+
+print(es_min)
+print(y_min)
+print(y_max)
+
+ggplot() + 
+  # background lines
+  geom_hline(yintercept = c(0),
+               size = LINE_WIDTH,
+             color="grey") +
+  # curves
+  geom_path(data = df, 
+            mapping = aes(x=hit_indices, 
+                          y = es_profile, 
+                          color=condition),
+            show.legend = FALSE,
+            alpha = 0.7,
+            size = 0.25 * 1.5
+            ) +
+  # hit index tick marks
+  geom_segment(data = df,
+               size = 0.25,
+               mapping = aes(x= hit_indices, 
+                             y = es_min - (tick_height * y_pos), 
+                             yend = es_min - (tick_height * (y_pos + 1)), 
+                             color=condition), 
+               show.legend = FALSE) +
+  # line seperating tick marks
+  geom_hline(data = df,
+             mapping = aes(yintercept = es_min - (tick_height * y_pos)), 
+             size = LINE_WIDTH,
+             color = "black") + 
+  scale_color_manual(values = cols) + 
+  xlim(c(0,x_max)) +
+  scale_x_continuous(expand = c(0,0), breaks = c(0, 5000, 10000, 15000)) + 
+  scale_y_continuous(expand = c(0,0), limits = c(y_min, y_max), breaks = c(0, 0.5, 1)) +
+  my_theme() + 
+  labs(x = "rank in protein list",
+       y = "enrichment score") + 
+  theme(
+    axis.title.y = element_text( hjust = 0.85)
+    )-> plt
+  
+  for (condition in conditions){
+    # calculate y position of text
+    text_height <- es_min - tick_height * (as.numeric(factor(condition, levels = conditions)) - 0.5)
+   plt <- plt +
+     # add normalized enrichment score label
+    annotate(
+      "text", 
+      x = x_max, 
+      y = text_height, 
+      label = paste0(
+        "NES=", sprintf("%.2f", round(as.numeric(get_nes(df, condition)), 3)),
+        ",p",get_p_val(df, condition)),
+      color = cols[condition],
+      size = 6, 
+      hjust = -0.05,
+      size.unit = "pt") 
+   # add condition label enrichment score label
+   plt <- plt +
+       annotate(
+      "text", 
+      x = 0, 
+      y = text_height, 
+      label = condition,
+      color = cols[condition],
+      size = 6, 
+      hjust = 1.05,
+      size.unit = "pt") 
+  }
+  plt + 
+    coord_cartesian(clip = "off") +
+    theme(aspect.ratio = 1.5) + 
+    ggtitle(gene_list_name) -> plt
+  print(plt)
+  save_plot(
+    paste0(
+      gsea_results_dir,
+      "/",
+      gene_list_name
+    ),
+    width = 3,
+    height = 2
+  )
+}
+
+```
+
+
+```{r, fig.width=3, fig.height=2}
+
+for (gene_list in c(
+  "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+  "HALLMARK_INTERFERON_GAMMA_RESPONSE",
+  #"HALLMARK_INTERFERON_ALPHA_RESPONSE",
+  #"HALLMARK_IL6_JAK_STAT3_SIGNALING",
+  "HALLMARK_GLYCOLYSIS"
+  )){
+  # RNA results
+ #plot_gsea(
+  #'/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/gsea',
+  #conditions,
+  #gene_list
+  #) 
+  # protein results
+  plot_gsea(
+    "/Users/henrysanford/dev/test_data/macrophage/01_whole_proteome/03_results/3_reps/04_results/gsea",
+    conditions,
+    gene_list
+  )
+}
+
+```
+
+
+
+
+
+
+
+
+## PIP5K1B bargraph
+M0 TLR1-2 TLR3 TLR4 TLR7 TLR8 TLR9 STING M0-High M0 TLR1-2 TLR3 TLR4 TLR7 TLR8 TLR9 STING M0-High M0 TLR1-2 TLR3 TLR4 TLR7 TLR8 TLR9 STING M0-High
+```{r, fig.height=2, fig.width=4.4}
+ferry_members <- c("TBCK" = "ENSG00000145348.17", "CRYZL1" = "ENSG00000205758.12", "C12orf4" = "ENSG00000047621.12", "PPP1R21" = "ENSG00000162869.16", "GATD1" = "ENSG00000177225.17")
+
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/normalized_counts_formatted.tsv' |>
+  read_delim() |>
+  filter(gene %in% ferry_members) |>
+  set_names(c("gene", paste0(rep(c("M0","TLR1-2","TLR3","TLR4","TLR7","TLR8","TLR9","STING","M0-High"), 3),
+                             "_donor", rep(1:3, each = 9)))) |>
+  select(-contains("M0-High")) |>
+  rowwise() |>
+  mutate(median_m0 = mean(c_across(starts_with("M0")))) |>
+  ungroup() |>
+  pivot_longer(contains("_donor"), names_to = "sample_name", values_to = "normalized_counts") |>
+  mutate(
+    percent_control = normalized_counts / median_m0 * 100,
+    condition = str_split(sample_name, "_") |> map_chr(1),
+    donor = str_split(sample_name, "_") |> map_chr(2),
+    gene = factor(names(ferry_members)[match(gene, ferry_members)], levels = names(ferry_members)),
+    condition = factor(condition, levels = names(cols))
+  ) |> 
+  filter(condition != "TLR9")
+
+    df %>%
+      group_by(condition, gene) %>%
+      summarise( 
+        n=n(),
+        mean=mean(percent_control),
+        sd=sd(percent_control),
+        fun = mean
+      ) %>%
+      mutate(se=sd/sqrt(n))  %>%
+      mutate(ic=se * qt((1-0.05)/2 + .5, n-1)) -> stat_df
+    
+  df %>%
+    ggplot(aes(x = condition, y = percent_control, fill = condition)) + 
+    geom_bar(stat = "summary", 
+             fun = "mean",
+             color = "black",
+             size = LINE_WIDTH,
+             show.legend = FALSE,
+             width = 0.75,
+             alpha = 0.7) +
+      geom_jitter(
+        aes(shape = donor),
+                width = 0.1,
+                height = 0,
+                color = "black",
+                size = POINT_SIZE - 1.5,
+                stroke = 0.25 / 2,
+                show.legend = FALSE) + 
+      geom_errorbar(data = stat_df, 
+                  mapping = aes(
+                    x = condition, 
+                    ymin = mean - se,
+                    ymax = mean + se
+                  ),
+                  inherit.aes = FALSE,
+                  width = 0.4,
+                  color = "black",
+                  size = LINE_WIDTH) +
+      facet_wrap(~gene, nrow =1) +
+      my_theme() + 
+      geom_hline(yintercept = 100, 
+                 size = LINE_WIDTH, 
+                 linetype="dashed"
+                 ) + 
+    scale_y_continuous(
+      expand = expansion(mult = c(0, .3))
+    )  + 
+    theme(
+      strip.background = element_blank(),
+      panel.spacing = unit(1,"mm"),
+      strip.text = element_text(size = 8),
+      # reverse annoying ggbreak changes
+      axis.line.y.right = element_blank(),
+      axis.ticks.y.right = element_blank(),
+      axis.text.y.right = element_blank(),
+      axis.title.x = element_text(margin = margin(t = 0), color = "black", family = FONT_FAMILY, size = FONT_SIZE, hjust = 0.5),
+      axis.title.y = element_text(margin = margin(r = 0), color = "black", family = FONT_FAMILY, size = FONT_SIZE, vjust = 0.5),
+      panel.border =element_blank(),
+      axis.line.x = AXIS_LINE,
+      axis.line.y = AXIS_LINE,
+            axis.text.x = element_text(
+        color="black",angle=45, size=FONT_SIZE, family="Arial", vjust = 1, hjust=1)
+    ) + 
+    scale_fill_manual(values = cols) +
+    scale_shape_manual(values = c(21,22,23)) +
+    labs(x = "", y = "RNA expression, % of mean of M0") -> plt
+  ggsave("ferry_members_rna_percent_of_mean_of_m0.pdf", height = 2, width = 4.4)
+
+```
+
+
+```{r, fig.height=2, fig.width=4.5}
+# the ggbreak library isn't compatible with facet wrapping
+# so we have to make the multi-plot panel in an awkward way
+
+rna_expression_plot <- function(gn, y_label) {
+  '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/counts_filtered_mapped.txt'  |>  
+    read_delim() |> 
+    as.data.frame() |> 
+    mutate(gene = Name)
+    mutate(
+      median_d2 = (`sorted_bam_files/Sample_D2-1_IGO_13524_1_sorted.bam` + 
+                     `sorted_bam_files/Sample_D2-2_IGO_13524_2_sorted.bam` + 
+                     `sorted_bam_files/Sample_D2-3_IGO_13524_3_sorted.bam`)/3) -> df
+  
+  pivot_cols <- colnames(df)[grepl("Sample", colnames(df))]
+  df %>% pivot_longer(cols = pivot_cols, names_to = "sample_name", values_to = "normalized_counts" ) %>%
+    mutate(percent_control = (normalized_counts / median_d2) * 100) %>%
+    mutate(condition = case_when(grepl("D2",sample_name) ~ "D2",
+              grepl("D4.Ac",sample_name) ~ "D4A",
+              grepl("D8.Ac",sample_name) ~ "D8A",
+              grepl("D4.Chr",sample_name) ~ "D4C",
+              grepl("D8.Chr",sample_name) ~ "D8C"
+              )) %>%
+    filter(
+      gene == gn,
+      condition != "D2") -> df
+  
+    df %>%
+      group_by(condition, gene) %>%
+      summarise( 
+        n=n(),
+        mean=mean(percent_control),
+        sd=sd(percent_control),
+        fun = mean
+      ) %>%
+      mutate(se=sd/sqrt(n))  %>%
+      mutate(ic=se * qt((1-0.05)/2 + .5, n-1)) -> stat_df
+    
+  df$condition <- factor(df$condition, levels = names(cols))
+    
+  df %>%
+    ggplot(aes(x = condition, y = percent_control, fill = condition)) + 
+    geom_bar(stat = "summary", 
+             fun = "mean",
+             show.legend = FALSE,
+             width = 0.75,
+             alpha = 0.7) +
+      geom_jitter(shape = 21, 
+                width = 0.1,
+                height = 0,
+                color = "black",
+                size = POINT_SIZE - 1,
+                stroke = POINT_STROKE,
+                show.legend = FALSE) + 
+      geom_errorbar(data = stat_df, 
+                  mapping = aes(
+                    x = condition, 
+                    ymin = mean - se,
+                    ymax = mean + se
+                  ),
+                  inherit.aes = FALSE,
+                  width = 0.4,
+                  size = LINE_WIDTH) +
+      facet_wrap(~gene, scales = "free") +
+      ggbreak::scale_y_break(breaks = c(200, 550), 
+                           scales = 1,
+                           expand = expansion(mult = c(0, .2))) +
+      my_theme() + 
+      geom_hline(yintercept = 100, 
+                 size = LINE_WIDTH, 
+                 linetype="dashed"
+                 ) + 
+    scale_y_continuous(
+      expand = expansion(mult = c(0, .3))
+    )  + 
+    theme(
+      strip.background = element_blank(),
+      panel.spacing = unit(2,"mm"),
+      strip.text = element_text(size = 8),
+      # reverse annoying ggbreak changes
+      axis.line.y.right = element_blank(),
+      axis.ticks.y.right = element_blank(),
+      axis.text.y.right = element_blank(),
+      axis.title.x = element_text(margin = margin(t = 0), color = "black", family = FONT_FAMILY, size = FONT_SIZE, hjust = 0.5),
+      axis.title.y = element_text(margin = margin(r = 0), color = "black", family = FONT_FAMILY, size = FONT_SIZE, vjust = 0.5),
+      panel.border =element_blank(),
+      axis.line.x = AXIS_LINE,
+      axis.line.y = AXIS_LINE
+    ) + 
+    scale_fill_manual(values = cols) +
+    ylim(0,8000) +
+    labs(x = "", y = y_label) -> plt
+  print(plt)
+  
+  return(plt)
+}
+
+a = rna_expression_plot("PIP5K1A", "RNA expression (%D2)")
+b = rna_expression_plot("PIP5K1B", "")
+c = rna_expression_plot("PIP5K1C", "")
+
+ggpubr::ggarrange(
+   print(a), print(b), print(c),
+   nrow = 1, align = "h"
+)
+save_plot('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Exhaustion manuscript/01_RNA-sequencing/13524/barplots/pip5k_family', width = 4.5, height = 2)
+```
+

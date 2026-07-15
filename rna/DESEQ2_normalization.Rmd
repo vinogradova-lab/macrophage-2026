@@ -1,0 +1,57 @@
+```{r}
+library(DESeq2)
+```
+
+```{r}
+get_macrophage_cond <- function(sample_name){
+  cond_dict <- c(
+    '1'= 'M0 Low',
+    '2'= 'TLR1',
+    '3'= 'TLR3',
+    '4'= 'TLR4',
+    '5'= 'TLR7',
+    '6'= 'TLR8',
+    '7'= 'TLR9',
+    '8'= 'STING',
+    '9'= 'M0 High'
+  )
+  
+  return(
+    cond_dict[
+      tail(str_split(sample_name, "_")[[1]], n = 1)
+    ]
+  )
+}
+rna_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/'
+paste0(rna_dir, "counts.tsv") %>% 
+  read_delim(delim = "\t") %>%
+  column_to_rownames("gene.id") -> counts_table
+```
+
+```{r}
+# drop TZ3 donor
+counts_table %>% colnames() -> samples
+counts_table <- counts_table[,samples[!grepl("TZ3", samples)]]
+
+counts_table %>% colnames() -> samples
+cbind(
+  samples,
+  condition = samples %>% lapply(get_macrophage_cond) %>% unlist()) %>% as.data.frame() -> df
+rownames(df) <- NULL 
+df %>% column_to_rownames("samples") -> coldata
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = counts_table,
+                                 colData = coldata,
+                                 design = ~ condition)
+```
+```{r}
+dds <- estimateSizeFactors(dds)
+normalized_counts <- counts(dds, normalized=TRUE)
+
+
+write.table(normalized_counts, file=paste0(rna_dir, "normalized_counts.tsv"), sep="\t", quote=F)
+```
+
+

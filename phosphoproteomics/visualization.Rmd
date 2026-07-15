@@ -1,0 +1,1237 @@
+## Phosphoproteomics visualization
+
+```{r, fig.width=2, fig.height=2}
+
+source('../macrophage_figure_setting.R')
+pca_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/06_macrophage/macrophage/phosphoproteomics/'
+
+plot_loadings <- function(loadings_df, ggplot_obj, arrow_scaling, num_loadings = 5){
+  loadings_df %>% arrange(PC1) %>% tail(num_loadings) %>% pull(variable)-> top_pc1
+  loadings_df %>% arrange(PC1) %>% head(num_loadings) %>% pull(variable)-> bottom_pc1
+  loadings_df %>% arrange(PC2) %>% tail(num_loadings) %>% pull(variable)-> top_pc2
+  loadings_df %>% arrange(PC2) %>% head(num_loadings) %>% pull(variable)-> bottom_pc2
+  
+  loadings_df %>% filter(variable %in% c(top_pc1, bottom_pc1, bottom_pc2, top_pc2)) -> filtered_loadings
+  loadings <- ggplot_obj + geom_segment(data= filtered_loadings, 
+                      aes(x = 0, y = 0, 
+                          xend = PC1 * arrow_scaling, 
+                          yend = PC2 * arrow_scaling), 
+                      inherit.aes = FALSE,
+                    arrow = arrow(length = unit(0.1, "cm")),
+                    size = LINE_WIDTH,
+                    color="grey90") + 
+    geom_text(data= filtered_loadings,
+                    mapping = aes(label=variable,x=PC1*arrow_scaling, y=PC2*arrow_scaling), 
+                    inherit.aes = FALSE, 
+                    segment.size = LINE_WIDTH,
+                    min.segment.length = unit(0,"mm"),
+                    size=1.763, 
+                    color="black",
+                    #bg.color = "white",
+                    segment.color = "grey") 
+  return(loadings)
+}
+
+pca_plot <- function(df, loadings_df, x_column, y_column, x_lab, y_lab, fn, arrow_scaling = 100){
+  df %>%
+    ggplot(aes_string(
+      x = x_column,
+      y = y_column,
+      fill = "condition"
+    )) + 
+    geom_point(size = POINT_SIZE,
+             stroke=POINT_STROKE,
+             shape=21,
+             alpha=0.9,
+             col="black", 
+             show.legend = FALSE) + my_theme() +
+    labs(x = x_lab, y = y_lab) + 
+    scale_fill_manual(values=cols, name="") +
+    theme(aspect.ratio=1)-> plt
+  print(plt)
+  save_plot(fn, height=2, width = 2)
+  
+  plot_loadings(loadings_df, plt, arrow_scaling) -> plot_with_loadings
+  print(plot_with_loadings)
+  save_plot(paste0(fn, "_with_loadings"), height=2, width = 2)
+  ggplot() + my_theme() +
+    labs(x = x_lab, y = y_lab) + 
+    theme(aspect.ratio=1) -> base_plot
+  plot_loadings(loadings_df, base_plot, 1, 10) -> loadings_only
+  
+  print(loadings_only)
+  save_plot(paste0(fn, "_loadings_only"), height=2, width = 2)
+}
+
+read.csv(paste0(pca_dir, "pca_results.csv")) -> df
+
+read.csv(paste0(pca_dir, "loadings_results.csv")) -> loadings_df
+
+pca_plot(
+  df, 
+  loadings_df,
+  "principal.component.1",
+  "principal.component.2", 
+  "PC1 (74.28%)",
+  "PC2 (22.45%)",
+  paste0(pca_dir, "pca"),
+  arrow_scaling = 260
+)
+
+```
+
+```{r, fig.width=2, fig.height=2}
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/20250708_TZ3114/output/1/05_results/expression-normalized_phosphorylation_table.csv' %>%
+  read_csv(show_col_types = FALSE) 
+colnames(df)
+label_df <- df %>% filter(
+  (`peptide rank` < 4) | (`peptide rank` > 1639)
+)
+df %>%
+  ggplot(aes(x = `peptide rank`, y = log2(`TLR4/M0_normalized_phosphorylation`), label = paste0(protein, "_", residue))) + 
+  geom_hline(yintercept = 0, color = "black", size = LINE_WIDTH) +
+  geom_point(shape = 21, fill = "grey90", size = 1, stroke = LINE_WIDTH, color = "black") + 
+  geom_point(data = label_df, shape = 21, fill = "transparent", size = 1, stroke = LINE_WIDTH, color = "black") + 
+  labs(
+    y = expression("normalized phosphorylation, log"[2]*"(TLR4/M0)"),
+    x = "rank"
+  ) + 
+  geom_text_repel(data = label_df, max.overlaps = Inf, size = FONT_SIZE_MM, segment.size = LINE_WIDTH, box.padding = 0.5,
+    min.segment.length = 0,) + turboid_theme() 
+ggsave("rank_plot.svg", width = 2, height = 2)
+ggsave("rank_plot.png", width = 2, height = 2)
+
+df %>% drop_na()
+```
+
+
+
+```{r, fig.width=2, fig.height=2}
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/20250708_TZ3114/output/1/05_results/normalized_phosphorylation_table.csv' %>%
+  read_csv(show_col_types = FALSE) 
+colnames(df)
+label_df <- df %>% filter(
+  (`peptide rank` < 4) | (`peptide rank` > 1639)
+)
+df %>%
+  ggplot(aes(x = log2(`TLR4/M0_whole-proteome`), y = log2(`TLR4/M0_phosphorylation`), label = paste0(protein, "_", residue))) + 
+  geom_hline(yintercept = 0, color = "black", size = LINE_WIDTH) +
+  geom_vline(xintercept = 0, color = "black", size = LINE_WIDTH) +
+  geom_point(shape = 21, fill = "grey90", size = 1, stroke = LINE_WIDTH, color = "black", alpha = 0.3) + 
+  geom_point(data = label_df, shape = 21, fill = "transparent", size = 1, stroke = LINE_WIDTH, color = "black") + 
+  labs(
+    y = expression("phosphorylation, log"[2]*"(TLR4/M0)"),
+    x = expression("protein expression, log"[2]*"(TLR4/M0)"),
+  ) + 
+  geom_text_repel(data = label_df, max.overlaps = Inf, size = FONT_SIZE_MM, segment.size = LINE_WIDTH, box.padding = 0.5,
+    min.segment.length = 0,) + turboid_theme() + 
+  geom_abline(slope = 1, intercept = c(-1, 0,1), size = LINE_WIDTH)
+ggsave("scatterplot.svg", width = 2, height = 2)
+ggsave("scatterplot.png", width = 2, height = 2)
+
+df %>% drop_na()
+```
+
+
+
+
+```{r, fig.width=2, fig.height=2}
+cutoff <- -log10(0.05)
+df <- '/Users/henrysanford/Downloads/Differential Enrichment.tsv' %>% 
+  read_delim(show_col_types = FALSE) %>%
+  mutate(
+    regulation = case_when(
+     (-log10(`Adjusted p-value`) > cutoff) & (`Log₂(Frequency Factor)` > 0) ~ "Activated",
+     (-log10(`Adjusted p-value`) > cutoff) & (`Log₂(Frequency Factor)` < 0) ~ "Deactivated",
+     TRUE ~ "Other"
+    )
+  ) 
+df  |> filter((`Log₂(Frequency Factor)` > 0))  |> arrange(`Adjusted p-value`) %>% head(15) -> lbl_df
+lbl_df <- df  |> filter((`Log₂(Frequency Factor)` < 0))  |> arrange(`Adjusted p-value`) %>% head(15) |> rbind(lbl_df)
+
+df %>% colnames() %>% print()
+df %>%
+  ggplot(aes(x = `Log₂(Frequency Factor)`, y = -log10(`Adjusted p-value`), fill = regulation, label = `Gene Name`)) + 
+  geom_point(show.legend = FALSE, shape = 21, stroke = LINE_WIDTH, alpha = 0.7) + 
+  geom_hline(yintercept = 1.3, size = LINE_WIDTH, linetype = "dashed") + 
+  my_theme() + 
+  labs(
+    x = expression("log"[2]*"(enrichment value)"),
+    y = expression("-log"[10]*"(adjusted p-value)")
+  ) + 
+  scale_fill_manual(
+    values = c(
+      "Activated" = SIG_UP_COL,
+      "Deactivated" = SIG_DOWN_COL,
+      "Other" = UNCHANGED_COL
+    )
+  ) + 
+  geom_text_repel(
+    data = lbl_df,
+    size = 1.76389,
+    color = "black",
+    family = FONT_FAMILY,
+    box.padding = 0.2,
+    min.segment.length = 0,
+    segment.size = LINE_WIDTH,
+    max.overlaps = Inf
+  ) + 
+  geom_vline(xintercept = 0, size = LINE_WIDTH, linetype = "dashed") + 
+    annotate("text", x = Inf, y = Inf, label = paste0("Activated at TLR4"), 
+           hjust = 1.05, vjust = 1.1, size = 1.76389, family = FONT_FAMILY, color = SIG_UP_COL) +
+  annotate("text", x = -Inf, y = Inf, label = "Inhibited at TLR4", 
+           hjust = -0.05, vjust = 1.1, size = 1.76389, family = FONT_FAMILY, color = SIG_DOWN_COL) +
+  scale_y_continuous(expand = expansion(mult = c(0.1, 0.3))) +
+  theme(aspect.ratio = 1)
+
+ggsave(
+  "/Users/henrysanford/Downloads/PDF/kinases.pdf", height = 4, width = 2
+)
+
+ggsave(
+  "/Users/henrysanford/Downloads/PDF/kinases.png", height = 4, width = 2
+)
+```
+
+# Volcano plot
+
+```{r, fig.width=2, fig.height=4}
+cutoff <- -log10(0.05)
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.csv' %>% read_delim(show_col_types = FALSE) 
+df <- df  %>%
+  mutate(id = paste0(protein, "_",residue),     `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)` = pmin(`log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`, 6),)
+df %>% filter(id %in% c("STAT4_Y693",  "NFKB2_S872","NFKB1_S907")) -> lbl_df
+
+
+df %>% colnames() %>% print()
+df %>%
+  ggplot(aes(x = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`, y = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`, fill = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`, label = id)) + 
+  geom_point(show.legend = FALSE, shape = 21, stroke = LINE_WIDTH, alpha = 0.7) + 
+  geom_hline(yintercept = 1.3, size = LINE_WIDTH, linetype = "dashed") + 
+  my_theme() + 
+  labs(
+    x = expression("phosphorylation, log"[2]*"(TLR4/M0)"),
+    y = expression("-log"[10]*"(p-value)")
+  ) + 
+  scale_fill_manual(
+    values = c(
+      "Significant Up" = SIG_UP_COL,
+      "Significant Down" = SIG_DOWN_COL,
+      "Not Significant" = UNCHANGED_COL,
+       "Significant but <2 FC" = UNCHANGED_COL,
+      "Not Significant Down" = UNCHANGED_COL,
+      "Not Significant Up" = UNCHANGED_COL
+      
+    )
+  ) + 
+  geom_text_repel(
+    data = lbl_df,
+    size = FONT_SIZE_MM,
+    color = "black",
+    family = FONT_FAMILY,
+    box.padding = 0.2,
+    min.segment.length = 0,
+    segment.size = LINE_WIDTH,
+    max.overlaps = Inf
+  ) + 
+  geom_vline(xintercept = 1, size = LINE_WIDTH, linetype = "dashed") + 
+  geom_vline(xintercept = -1, size = LINE_WIDTH, linetype = "dashed") + 
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +
+  theme(aspect.ratio = 1) + 
+  xlim(-8, 8)
+
+ggsave(
+  "/Users/henrysanford/Downloads/PDF/volcano_plot.pdf", height = 4, width = 2
+)
+
+ggsave(
+  "/Users/henrysanford/Downloads/PDF/kinases.png", height = 4, width = 2
+)
+
+unique(df$`Regulation_phospho - TLR4 vs. M0 (9545 Residues)`)
+```
+
+```{r}
+immune_relevant_all <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Exhaustion manuscript/02_Mass-spectrometry data/Reference lists/Cell_2020_SI.xlsx - Table S4_Immune-relevant all.csv' |> 
+  read_csv(show_col_types = FALSE) |> 
+  filter(`immune-relevant?` == "Y") |> 
+  pull(symbol) |> 
+  unique()
+
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    group = case_when(
+      protein %in% immune_relevant_all ~ "Immune-relevant",
+      TRUE ~ "Other"
+    ),
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+    protein = paste(protein, residue, sep = "_")
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+max(df$`-log10_pval`)
+```
+
+```{r}
+options(ggrepel.max.overlaps = Inf) # for crowded volcano plots
+
+volcano_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/volcano_plot_expression_normalized/'
+
+color_code <- c(
+  "Immune-relevant" ="#237D41",
+  #"Mitochondrial" = "#5CBED7",
+  "Other" = 'gray88'
+)
+make_condition_plot_multi(
+  condition = "TLR4",
+  control_condition = "M0",
+  volcano_data = df,
+  color_code = color_code,
+  id_var = "protein",
+  fc_cutoff = 1,
+  rasterize_points = TRUE,
+  highlight_proteins = c("CCR5_S349","HSBP1_S15,S82","IRF2BP2_S360","NFKB1_S903,907","NFKB2_S858","NFKBIE_S157","RIPK1_S25","S100A9_T113","SAMHD1_T592","STAT3_Y705","STAT4_Y693","C5AR1_S332","C5AR1_T324,S326", "IFNAR1_S539")
+)
+
+
+```
+
+### GO fill-label lookup (shared MSigDB 2026.1.Hs source)
+
+```{r}
+# Single source of truth shared with go_enrich()/.go_msigdb() (see GO_updates.md):
+# the MSigDB C5 GO 2026.1.Hs export. Load once; drop the large `description` column.
+msigdb_go <- readr::read_csv(
+  '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/06_macrophage/macrophage/reference_dbs/msigdb_go_2026.csv',
+  col_select = c(ontology, GO_id, term, gene), show_col_types = FALSE)
+
+# Member gene SYMBOLS of one GO term (by id), or the union of several named terms.
+go_genes <- function(id) msigdb_go |> dplyr::filter(GO_id == id) |> dplyr::pull(gene) |> unique()
+go_genes_terms <- function(terms) msigdb_go |>
+  dplyr::filter(tolower(term) %in% tolower(terms)) |> dplyr::pull(gene) |> unique()
+```
+
+### Endocytosis
+
+```{r}
+endocytosis <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/00_reference lists/GO_term_lists/Endocytosis/KEGG_and_GOBP_ENDOCYTOSIS_list.csv' |> 
+  read_csv(show_col_types = FALSE) |> 
+  pull(gene_name) |> unique()
+
+volcano_dir
+```
+
+
+```{r}
+
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    group = case_when(
+      protein %in% endocytosis ~ "Endocytosis",
+      TRUE ~ "Other"
+    ),
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+    protein = paste(protein, residue, sep = "_")
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+max(df$`-log10_pval`)
+
+volcano_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/volcano_plot_expression_normalized/'
+
+color_code <- c(
+  "Endocytosis" =cols[["TLR8"]],
+  #"Mitochondrial" = "#5CBED7",
+  "Other" = 'gray88'
+)
+make_condition_plot_multi(
+  condition = "TLR4",
+  control_condition = "M0",
+  volcano_data = df,
+  color_code = color_code,
+  id_var = "protein",
+  fc_cutoff = 1,
+  rasterize_points = TRUE,
+  highlight_proteins = df |> 
+  filter(group == "Endocytosis") |> arrange(desc(abs(`log2_FC`))) |> 
+  pull(protein) |> 
+  head(10)
+)
+```
+
+```{r}
+
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    group = case_when(
+      protein %in% go_genes("GO:0016197") ~ "Endosomal transport",
+      TRUE ~ "Other"
+    ),
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+    protein = paste(protein, residue, sep = "_")
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+max(df$`-log10_pval`)
+
+volcano_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/volcano_plot_expression_normalized/'
+
+color_code <- c(
+  "Endosomal transport" =cols[["TLR8"]],
+  #"Mitochondrial" = "#5CBED7",
+  "Other" = 'gray88'
+)
+make_condition_plot_multi(
+  condition = "TLR4",
+  control_condition = "M0",
+  volcano_data = df,
+  color_code = color_code,
+  id_var = "protein",
+  fc_cutoff = 1,
+  rasterize_points = TRUE,
+  highlight_proteins = c("SNX3_S26","DAB2_S449","DAB2_T674","ENTR1_S209","PICALM_T301","SNX6_S194","DENND5A_T833","DENND1A_S546","DENND1A_S523","GCC2_S236")
+)
+
+```
+
+
+```{r}
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    group = case_when(
+      protein %in% go_genes("GO:0016192") ~ "Vesicle mediated transport",
+      TRUE ~ "Other"
+    ),
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+    protein = paste(protein, residue, sep = "_")
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+max(df$`-log10_pval`)
+
+volcano_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/volcano_plot_expression_normalized/'
+
+color_code <- c(
+  "Vesicle mediated transport" =cols[["TLR7"]],
+  #"Mitochondrial" = "#5CBED7",
+  "Other" = 'gray88'
+)
+make_condition_plot_multi(
+  condition = "TLR4",
+  control_condition = "M0",
+  volcano_data = df,
+  color_code = color_code,
+  id_var = "protein",
+  fc_cutoff = 1,
+  rasterize_points = TRUE,
+  highlight_proteins = c("MAPK1_Y187","MAPK1_T185,Y187","MAPK3_T202,Y204","CTTN_T399,S405,S418","DAB2_S723","DCTN1_S105","FCER1G_Y65","FCER1G_Y76","EHBP1L1_S245","GGA1_S268","UVRAG_T545,S550") 
+)
+
+```
+
+
+
+
+```{r}
+gtpase_genes <- go_genes_terms(c("gtpase activity","gtpase activator activity","gtpase regulator activity","gtpase activating protein binding","gtpase inhibitor activity","gtpase binding"))
+```
+
+
+```{r}
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    group = case_when(
+      protein %in% gtpase_genes ~ "GTPase activity",
+      TRUE ~ "Other"
+    ),
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+    protein = paste(protein, residue, sep = "_")
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+max(df$`-log10_pval`)
+
+volcano_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/volcano_plot_expression_normalized/'
+
+color_code <- c(
+  "GTPase activity" =cols[["TLR3"]],
+  #"Mitochondrial" = "#5CBED7",
+  "Other" = 'gray88'
+)
+make_condition_plot_multi(
+  condition = "TLR4",
+  control_condition = "M0",
+  volcano_data = df,
+  color_code = color_code,
+  id_var = "protein",
+  fc_cutoff = 1,
+  rasterize_points = TRUE,
+  highlight_proteins = c("MX1_T319,T328,T333","GAPVD1_S1023","SAR1A_T139","SEPTIN7_T426","GBP1_T197","IQGAP1_T1509","IQGAP1_Y1510","TBC1D1_S565,S585","TBC1D9B_S432,S435","TNK2_S881","RAB10_T165","RAB10_T5") 
+)
+
+```
+
+# Pie chart
+```{r, fig.width=3, fig.height=2}
+lgnd_dimension <- 3
+'/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/06_macrophage/macrophage/phosphoproteomics/structural_features.csv' %>%
+  read_csv() %>%
+  select(uniprot,residue, structure_group) %>%
+  unique() %>%
+  mutate(location = replace_na(structure_group, "other")) %>%
+  dplyr::count(structure_group) %>%
+    dplyr::mutate(
+    csum = rev(cumsum(rev(n))),
+    pos = n / 2 + dplyr::lead(csum, 1),
+    pos = ifelse(is.na(pos), n / 2, pos)
+  ) %>%
+  ggplot(aes(x = "", y = n, fill = structure_group)) + 
+  geom_bar(stat = "identity", width = 1, color = "black", size = LINE_WIDTH, show.legend = TRUE) + 
+  my_theme() + 
+  scale_fill_manual(values = unname(cols)) + 
+  geom_text(aes(y = pos, label = n), color = "black",, size = FONT_SIZE_MM, font = "Arial") +
+  coord_polar("y") +
+  theme(
+    legend.key.height = unit(lgnd_dimension, "mm"), legend.key.width = unit(lgnd_dimension, "mm"), legend.key.spacing.y = unit(lgnd_dimension, "mm")
+  )
+
+save_plot(
+  "pie_chart", width = 3, height = 2
+)
+
+unname(cols)
+```
+
+# Histogram
+```{r, fig.width=2.8, fig.height=2}
+
+
+histogram_bin_width <- 3
+max_distance = 35
+palette <- rev(c(
+  cols[["TLR1-2"]],
+cols[["TLR3"]],
+cols[["TLR8"]],
+cols[["TLR9"]]
+))
+
+df <- "cysteine_phosphosite.csv" %>%
+  read_csv(show_col_types = FALSE) %>%
+  replace_na(list(reactivity_change = FALSE)) %>%
+  mutate(
+    reactivity_change = case_when(
+      reactivity_change ~ "reactive cysteine",
+      TRUE ~ "non reactive cysteine"
+    ),
+    group_label = paste0(
+      phospho_type,
+      " phosphosite, ",
+      reactivity_change,
+      " (n=",
+      ave(
+        seq_along(phospho_type),
+        paste(phospho_type, reactivity_change),
+        FUN = length
+      ),
+      ")"
+    )
+  )
+df %>%
+  ggplot(aes(
+    x = cysteine_phosphosite_distance,
+    y = after_stat(density) * 100,
+    color = group_label
+  )) +
+  geom_freqpoly(binwidth = histogram_bin_width,
+                position = "identity",
+                alpha = 0.7) +
+  my_theme() +
+  labs(x = "cysteine to phosphosite distance", y = "cysteine-phosphosite pairs (%)", color = NULL) +
+  xlim(0, 35) + scale_color_manual(values = palette) + theme(
+    panel.grid.major.x  = element_line(size = LINE_WIDTH, color = "grey90"),
+    panel.grid.minor.x  = element_line(size = LINE_WIDTH, color = "grey90"),
+    legend.position = "top",
+    legend.direction = "vertical",
+    legend.text = element_text(
+      size = FONT_SIZE,
+      color = "black",
+      family = FONT_FAMILY,
+      margin = margin()
+    ),
+    legend.key.height = unit(1, "mm"),
+    legend.margin = margin(b = -7)
+  ) + scale_x_continuous(
+    breaks = seq(
+      from = 0,
+      by = histogram_bin_width,
+      length.out = round(max_distance / histogram_bin_width)
+    ),
+    limits = c(0, max_distance),
+    expand = expansion(mult = c(0, 0))
+  )
+save_plot("histogram", width = 2.8, height = 2)
+
+
+```
+
+```{r, fig.width=2, fig.height=2}
+df <- "cysteine_phosphosite.csv" |> 
+  read_csv(show_col_types = FALSE) |> 
+  filter(reactivity_change == TRUE) 
+df |> 
+  ggplot(aes(x = cysteine_phosphosite_distance)) + 
+  geom_histogram(bins = 9, fill = cols[["TLR8"]], color = "black", size = LINE_WIDTH, boundary = 0) + 
+  my_theme() + 
+  labs(x = "cysteine to phosphosite distance", y = "reactivity changes") + 
+  ggtitle(paste0("Peptides with reactive Cys\nand phosphosites (", nrow(df), ")")) + 
+  theme(panel.border = element_blank(), axis.line.x = AXIS_LINE, axis.line.y = AXIS_LINE, title = element_text(size = 8, family = FONT_FAMILY, color = "black")) 
+
+ggsave("cysteine_phosphosite_histogram.pdf", width = 2, height = 1.7)
+```
+
+```{r}
+df |> 
+  filter(uniprot == "Q8N1I0")
+```
+
+
+```{r}
+"cysteine_phosphosite.csv" |> 
+  read_csv(show_col_types = FALSE) |> 
+  arrange(cysteine_phosphosite_distance) |> 
+  filter(reactivity_change)
+```
+
+
+
+```{r}
+lgnd_dimension <- 3
+"phosphorylation_table.csv" %>%
+  read_csv(show_col_types = FALSE)  %>% 
+  select(residue) %>%
+  # 1. Split the column by the comma and store as a list column
+  mutate(
+    residue = str_split(residue, pattern = ",")
+  ) %>%
+  
+  # 2. Explode the list column into new rows
+  #    The new column containing the split elements will be named 'my_column_split'
+  unnest(residue) %>%
+  
+  # 3. Slice to just the first character of the new column
+  mutate(
+    first_char = str_sub(residue, start = 1, end = 1)
+  ) %>%
+    dplyr::count(first_char) %>%
+    dplyr::mutate(
+    csum = rev(cumsum(rev(n))),
+    pos = n / 2 + dplyr::lead(csum, 1),
+    pos = ifelse(is.na(pos), n / 2, pos)
+  ) %>%
+  ggplot(aes(x = "", y = n, fill = first_char)) + 
+  geom_bar(stat = "identity", width = 1, color = "black", size = LINE_WIDTH, show.legend = TRUE) + 
+  my_theme() + 
+  scale_fill_manual(values = (unname(cols))) + 
+  geom_text(aes(y = pos, label = n), color = "black",, size = FONT_SIZE_MM, font = "Arial") +
+  coord_polar("y") +
+  theme(
+    legend.key.height = unit(lgnd_dimension, "mm"), legend.key.width = unit(lgnd_dimension, "mm"), legend.key.spacing.y = unit(lgnd_dimension, "mm")
+  )
+
+save_plot("phosphosite_pie_chart", 1.5, 1.3)
+```
+
+
+```{r, fig.width=1.5, fig.height = 2}
+library(forcats) # Required for fct_collapse
+
+"phosphorylation_table.csv" %>%
+  read_csv(show_col_types = FALSE) %>%
+  select(residue) %>%
+  mutate(
+    num_ps = str_count(residue, pattern = ",") + 1
+    ) %>%
+  mutate(
+    num_ps_factor = case_when(
+      num_ps >= 3 ~ "3+",
+      TRUE ~ as.character(num_ps)
+    ) %>%
+    fct_relevel("0", "1", "2", "3+")
+  ) %>%
+ ggplot(aes(x = num_ps_factor)) + 
+ geom_bar(fill = cols[["TLR8"]], color = "black", size = LINE_WIDTH, width = 0.7) + 
+ my_theme() +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
+  labs(x = "phosphosites per peptide", y = "peptides") 
+save_plot("phosphosites_per_peptide", 1.5, 2)
+```
+
+
+
+
+```{r, fig.height=2, fig.width=4}
+
+cols <-c(
+  "D2" = "#A1A1A1", 
+  "D4A" = "#ABA2D6", 
+  "D8A" = "#603EA6", 
+  "D4C" = "#FBB31B", 
+  "D8C" = "#E27753"
+)
+
+
+df <- "/Users/henrysanford/Downloads/02_wp_analysis/20240821_6rep_2MC_two_replicate_var_filter/04_results/pca_plots_matched_phospho/pca_df.csv" %>%
+  read_csv(show_col_types = FALSE) %>%
+  mutate(
+    batch = case_when(
+        channel_name %>% str_detect("rep9$") ~ "WP matched to phosphoproteomics", TRUE ~ "Original WP dataset"),
+    donor =  str_split(channel_name, pattern = "rep") %>% map_chr(2)
+  ) 
+df %>%
+  ggplot(aes(x = `principal component 1`,y = `principal component 2`, fill = condition, shape = batch, color = condition, label = donor)) + 
+  geom_point(stroke = LINE_WIDTH, size = 2, alpha = 0.5) + 
+  scale_shape_manual(values = c(21, 25)) + 
+  my_theme() + 
+  theme(aspect.ratio = 1) + 
+  scale_fill_manual(values = cols) + 
+  scale_color_manual(values = cols) + 
+  theme(legend.margin = margin()) + labs(
+    x = "PC1 (42.16%)",
+    y = "PC2 (18.3%)"
+  ) + 
+  geom_text(color = "black", size = 3)
+  
+ggsave('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Exhaustion manuscript/02_Mass-spectrometry data/04_phosphoproteomics/HK3-53_WP/output/HK3-53_WP/04_results/pca_plots_matched_phospho/pca.png', width = 4, height = 2)
+
+```
+
+
+### WP vs Phospho scatterplot
+
+```{r}
+
+
+
+correlation_cols <-
+  c(
+    "light_grey" = "lightgrey",
+    "dark_grey" = "grey40",
+    "teal" = "#21918c",
+    "violet" = "#440154",
+    "yellow" = "#bade28",
+    'black' = 'black'
+  )
+
+create_wp_rna_corr_plot <-
+  function(df ,comparison,
+           proteins_to_label,
+           x_lim = 4.6,
+           y_lim = 10) {
+    condition = strsplit(comparison, "_")[[1]][1]
+    control = strsplit(comparison, "_")[[1]][2]
+    
+    y_lim = max(abs(df$log2FoldChange)) * 1.2
+    y_min = min(df$log2FoldChange) * 1.2
+    x_lim = max(abs(df$logFC_wp)) * 1.2
+    print(y_lim)
+    print(y_min)
+    print(x_lim)
+    
+    df %>% filter(protein %in% proteins_to_label) -> label_data
+    
+    label <- df %>%
+      summarise(
+        left_red = sum(gene_color == 'yellow' & logFC_wp < 0),
+        right_red = sum(gene_color == 'yellow' & logFC_wp > 0),
+        left_cyan = sum(gene_color == 'teal' & logFC_wp < 0),
+        right_cyan = sum(gene_color == 'teal' & logFC_wp > 0),
+        left_yellow = sum(gene_color == 'dark_grey' & logFC_wp < 0),
+        right_yellow = sum(gene_color == 'dark_grey' & logFC_wp > 0),
+        down_blue = sum(gene_color == 'violet' & log2FoldChange < 0),
+        up_blue = sum(gene_color == 'violet' & log2FoldChange > 0),
+        grey = sum(gene_color == 'light_grey')
+      ) %>% unlist()
+    
+    x_lbl_sprd = x_lim * 0.915
+    y_lbl_sprd = y_lim * 0.98
+    y_lbl_min = y_min * 0.98
+    lbl_alpha = 1
+    
+    
+    x <-
+      c(-x_lbl_sprd,
+        x_lbl_sprd,
+        -x_lbl_sprd,
+        x_lbl_sprd,
+        -x_lbl_sprd,
+        x_lbl_sprd,
+        0,
+        0,
+        0)
+    y <-
+      c(0,
+        0,
+        y_lbl_sprd,
+        y_lbl_min,
+        y_lbl_min,
+        y_lbl_sprd,
+        y_lbl_min,
+        y_lbl_sprd,
+        0)
+    alpha <- c(rep(lbl_alpha, 8), 0)
+    color <-
+      c(
+        'yellow',
+        'yellow',
+        'teal',
+        'teal',
+        'dark_grey',
+        'dark_grey',
+        'violet',
+        'violet',
+        'black'
+      )
+    text_labels <- data.frame(x, y, label, color)
+    ratio <- paste0("(", condition, "/", control, ")")
+    pearson_r_color <- 'grey40'
+    df %>%
+      ggplot(aes(x = logFC_wp, y = log2FoldChange)) +
+      geom_point(
+        alpha = 0.2,
+        size = 1,
+        mapping = aes(fill = gene_color),
+        shape = 21,
+        stroke = 0
+      ) +
+      geom_smooth(
+        method = "lm",
+        se = FALSE,
+        color = pearson_r_color,
+        formula = 'y ~ x',
+        size = LINE_WIDTH * 4
+      ) +
+      labs(x = substitute(paste('protein expression, log'[2], n), list(n = ratio)),
+           y = substitute(paste('phosphorylation, log'[2], n), list(n = ratio))) +
+      theme_bw() +
+      geom_hline(
+        yintercept = c(FC_CUTOFF,-FC_CUTOFF),
+        linetype = "dashed",
+        size = LINE_WIDTH
+      ) +
+      geom_vline(
+        xintercept = c(FC_CUTOFF,-FC_CUTOFF),
+        linetype = "dashed",
+        size = LINE_WIDTH
+      ) +
+      theme(aspect.ratio = 1, legend.position = "none") +
+      
+      # specific proteins
+      geom_point(
+        mapping = aes(fill = gene_color),
+        alpha = 1,
+        data = label_data,
+        size = 1,
+        shape = 21,
+        color = "black",
+        stroke = POINT_STROKE / 2
+      ) +
+      geom_text_repel(
+        data = label_data,
+        mapping = aes(label = protein, color = gene_color),
+        size = FONT_SIZE_MM,
+        segment.color = "black",
+        segment.size = LINE_WIDTH,
+        min.segment.length = 0.2,
+        #bg.color = "white",
+        box.padding = 1,
+        direction = "both"
+      ) +
+      scale_color_manual(values = correlation_cols) +
+      my_theme() +
+      theme(aspect.ratio = 1,
+            legend.position = "none") +
+      geom_label(
+        inherit.aes = FALSE,
+        data = text_labels,
+        mapping = aes(
+          x = x,
+          y = y,
+          label = label,
+          fill = color,
+          alpha = alpha
+        ),
+        color = 'white',
+        size = 6,
+        label.size = 0,
+        size.unit = "pt"
+      ) +
+      scale_fill_manual(values = correlation_cols) +
+      ylim(y_min, y_lim) +
+      xlim(-x_lim, x_lim) +
+      stat_cor(
+        aes(label = ..r.label..),
+        color = pearson_r_color,
+        label.x = -(x_lim * 0.95),
+        label.y = (y_lim * 0.67),
+        size = FONT_SIZE_MM
+      ) -> plot
+    # Rasterize only the dense point cloud; labels/lines/axes stay vector.
+    plot <- ggrastr::rasterise(plot, layers = "Point", dpi = 600, dev = "ragg")
+    print(plot)
+    
+    save_plot(
+     paste0(
+        correlation_dir,
+        condition,
+        "_",
+        control,
+        "_pearson_corrplot"
+      ),
+      height = 2,
+      width = 2
+    )
+  }
+
+```
+
+```{r, fig.width=2, fig.height=2}
+correlation_dir <- paste0("/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/wp_phospho_scatterplot/")
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/wp_phospho_scatterplot/wp_vs_phospho_data.csv' |> 
+  read_csv(show_col_types = FALSE) |> 
+  mutate(
+    log2FoldChange = `log2_FC_phospho - TLR4 vs. M0 (11689 Residues)`,
+    logFC_wp = `log2_FC_Macrophage WP - TLR4 vs. M0 (5000 Proteins)`
+  ) |> 
+    filter(if_all(everything(), ~ !is.na(.) & !is.infinite(.)))
+  
+  df |> 
+  create_wp_rna_corr_plot(
+    comparison = "TLR4_M0",
+    proteins_to_label = c()
+  )
+
+```
+
+# Volcano plot
+
+```{r}
+library(msigdbr)
+library(tidyverse)
+# read go_bp, slow
+c2 <- msigdbr(species = "Homo sapiens",
+              category = "C5",
+              subcategory = "GO:BP")
+
+c5 <-msigdbr(species = "Homo sapiens",
+              category = "C2")
+
+c2
+```
+
+```{r, fig.width=10, fig.height=5}
+library(ggVennDiagram)
+gobp_receptor_endocytosis <- c2 |> filter(gs_name == "GOBP_RECEPTOR_MEDIATED_ENDOCYTOSIS") |> pull(gene_symbol)
+kegg_endocytosis <- c5 |> filter(gs_name == "KEGG_ENDOCYTOSIS") |> pull(gene_symbol)
+reactome_super <- c5 |> filter(gs_name == "REACTOME_CLATHRIN_MEDIATED_ENDOCYTOSIS") |> pull(gene_symbol)
+gobp_endocytosis <- c2 |> filter(gs_name == "GOBP_ENDOCYTOSIS") |> pull(gene_symbol)
+
+gene_list <- list(
+  KEGG_ENDOCYTOSIS = kegg_endocytosis,
+  GOBP_RECEPTOR_MEDIATED_ENDOCYTOSIS = gobp_receptor_endocytosis,
+  REACTOME_CLATHRIN_MEDIATED_ENDOCYTOSIS = reactome_super,
+  GOBP_ENDOCYTOSIS = gobp_endocytosis
+) 
+
+names(gene_list) <- stringr::str_wrap(names(gene_list), width = 20)
+ggVennDiagram(gene_list, label = "count") +
+  coord_cartesian(clip = "off") +
+  theme(plot.margin = margin(20, 40, 20, 40))
+
+ggsave("endocytosis_overlap.pdf", width = 10, height = 5)
+```
+
+```{r}
+
+# Combine all unique genes
+all_genes <- unique(c(gobp_endocytosis, kegg_endocytosis, reactome_super))
+
+# Create membership table
+gene_membership <- tibble(gene_name = all_genes) |>
+  mutate(
+    GOBP_RECEPTOR_MEDIATED_ENDOCYTOSIS = gene_name %in% gobp_receptor_endocytosis,
+    KEGG_ENDOCYTOSIS = gene_name %in% kegg_endocytosis,
+    REACTOME_CLATHRIN_MEDIATED_ENDOCYTOSIS = gene_name %in% reactome_super,
+    GOBP_ENDOCYTOSIS = gene_name %in% gobp_endocytosis
+  )
+
+
+# Write to CSV
+write.csv(gene_membership, "endocytosis_intersections.csv", row.names = FALSE)
+```
+
+
+```{r}
+
+endo_combined <- "endocytosis_intersections.xlsx" |> 
+  readxl::read_excel() |>
+  filter(GOBP_ENDOCYTOSIS | KEGG_ENDOCYTOSIS) 
+
+
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv' |> 
+  read_csv(show_col_types = FALSE) |> 
+  filter(reactivity_change)
+df |> 
+  ggplot(aes(x = condition, fill = protein %in% endo_combined$gene_name)) + 
+  geom_bar() + 
+  facet_wrap(~direction_of_reactivity_change) + scale_fill_manual(values = c("#de4968", "#3b0f70"))
+
+df |> 
+  filter(protein %in% endo_combined$gene_name) |> 
+  pull(protein) |> 
+  unique()
+```
+
+
+
+```{r}
+
+
+'/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |>
+  readxl::read_excel() |>
+  mutate(
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`, 
+    neg_log10_pval = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    group = case_when(protein %in% unique(endo_combined$gene_name) ~ "Endocytosis", TRUE ~ "Other"),
+    group = factor(group, levels = c("Endocytosis", "Other"))) |> 
+  arrange(desc(group)) |> 
+  ggplot(aes(x = log2_FC, y = neg_log10_pval, fill = group)) + 
+  geom_point(shape = 21, stroke = LINE_WIDTH)
+
+```
+
+
+
+```{r}
+tuschl_rna <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/00_reference lists/tuschl_paper/tuschl_s3.csv' |> 
+  read_csv(show_col_types = FALSE) |> 
+  select(Gene_Name, DEseq2_log2FC_pmaLPS)
+
+vino_rna <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/02_RNA-seq/DEG/M0lowvsTLR4/DE.xlsx' |> 
+  readxl::read_excel(sheet = "DEseq2, coding") |> select(gene.symbol, log2FoldChange) |> rename(Gene_Name = gene.symbol) |> 
+  distinct(Gene_Name, .keep_all = TRUE)
+
+df <- tuschl_rna |> 
+  left_join(vino_rna, by = "Gene_Name") |> 
+  drop_na() |> 
+  filter(Gene_Name != "SLC36A2")
+
+
+lbl_df <- df |> 
+  mutate(dist_to_origin = sqrt(DEseq2_log2FC_pmaLPS^2 + log2FoldChange^2)) |> 
+  arrange(desc(DEseq2_log2FC_pmaLPS)) |> 
+  head(30)
+
+cor(
+  x = df$DEseq2_log2FC_pmaLPS, y = df$log2FoldChange
+)
+  
+df |> 
+  unique() |> 
+  ggplot(aes(x = DEseq2_log2FC_pmaLPS, y = log2FoldChange, label = Gene_Name)) + 
+  geom_hline(yintercept = 0, color = "lightgrey") + 
+  geom_vline(xintercept = 0, color = "lightgrey") +
+  geom_abline(slope = 1, color = "lightgrey") +
+  geom_point(alpha = 0.3) + 
+  theme_bw() + 
+  labs(x = "Tuschl RNA pmaLPS log2FC", y = "Vinogradova RNA LPS logsFC") + 
+  geom_text_repel(data = lbl_df, min.segment.length = 0) + 
+  theme(panel.grid = element_blank()) + 
+  annotate(geom = "text" , x = -2.5, y = 10, label = "R = 0.35")
+
+ggsave("tuschl_vinogradova_cross_reference.pdf")
+
+```
+
+```{r, fig.width = 2.5, fig.height=6}
+'/Users/henrysanford/Downloads/Differential Enrichment.tsv' |> 
+  read_delim() |> 
+  filter(-log10(0.05) < -log10(`Adjusted p-value`)) |> 
+  arrange(`Kinase`) |> 
+  mutate(column = `Kinase Family` %in% c("Other", "PHD1","IKK", "STE", "TKL")) |> 
+  ggplot(aes(size = -log10(`Adjusted p-value`), fill = `Log₂(Frequency Factor)`, y = `Kinase`, x = 1)) + geom_point(shape = 21, stroke = LINE_WIDTH, color = "black") +
+  my_theme() + scale_fill_gradient2(low = "blue", high = "red", mid = "white") + 
+  theme(strip.clip = "off", axis.text.y = element_text(size = 5, color = "black", family = FONT_FAMILY), strip.background = element_blank(), strip.text = element_text(size = 6, family = "Arial", color = "black"), panel.spacing = unit(0, "mm")) + 
+    facet_grid(rows = vars(`Kinase Family`), scales = "free_y", space = "free",) + scale_size_continuous(range = c(0.2, 4), name = NULL)
+
+ggsave("kinase_dotplot.pdf", width = 2.5, height = 6)
+```
+
+
+# GO enrichment
+
+```{r}
+
+data <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel()
+df <- data |> 
+  mutate(
+    `-log10_pval` = `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`,
+    Regulation = `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`,
+    log2_FC = `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`,
+  ) |> 
+    filter(!is.na(`-log10_pval`), !is.infinite(`-log10_pval`)) |> 
+  filter(!is.na(`log2_FC`), !is.infinite(`log2_FC`))
+
+
+go_input <- df |> 
+  dplyr::select(log2_FC, `-log10_pval`, protein, residue) 
+colnames(go_input)
+```
+
+```{r}
+# clusterProfiler / org.Hs.eg.db / dplyr are loaded by macrophage_figure_setting.R
+# (sourced at the top), with the GO-enrichment engine go_enrich().
+
+# Your dataframe: df
+# Columns: log2_FC, -log10_pval, protein, residue
+
+# Define p-value cutoff
+p_cut <- -log10(0.05)
+
+# 1. Filter upregulated phosphosites
+up_sites <- df %>%
+  filter(log2_FC > 1, `-log10_pval` > p_cut)
+
+# 2. Filter downregulated phosphosites
+down_sites <- df %>%
+  filter(log2_FC < -1, `-log10_pval` > p_cut)
+
+# 3. Extract unique proteins
+up_proteins <- unique(up_sites$protein)
+down_proteins <- unique(down_sites$protein)
+
+# GO BP over-representation via the shared engine (go_enrich() in
+# macrophage_figure_setting.R: clusterProfiler::enricher on MSigDB 2026 GO, propagated,
+# with simplify() redundancy reduction). Background = NULL (all annotated genes),
+# matching the original enrichGO default universe.
+go_bp_phospho <- bind_rows(
+  go_enrich(up_proteins,   ont = "BP", background = NULL, simplify_cutoff = 0.6) |> mutate(direction = "Upregulated"),
+  go_enrich(down_proteins, ont = "BP", background = NULL, simplify_cutoff = 0.6) |> mutate(direction = "Downregulated")
+)
+write_csv(go_bp_phospho, "go_bp_phospho.csv")
+```
+
+```{r, fig.width=5.4, fig.height=2}
+go_bp_phospho |>
+  filter(adjusted_p_value < 0.01, n_proteins > 5) |>
+  group_by(direction) |>
+  slice_min(adjusted_p_value, n = 15) |>
+  ungroup() |>
+  go_dotplot(facet = "direction", size_range = c(0.7, 3)) + 
+  theme(strip.clip = "off")
+
+ggsave("go_bp_phosphorylation.pdf", width = 5.4, height = 2)
+go_bp_phospho  |>   filter(adjusted_p_value < 0.01, n_proteins > 5) |>
+  group_by(direction) |>
+  slice_min(adjusted_p_value, n = 40) |> arrange(p_value)
+
+go_bp_phospho |>
+  filter(grepl("gtp", Term))
+
+```
+
+```{r, fig.width=3.2, fig.height=2}
+# Panel F: standalone "phosphosites up in TLR4" GO:BP panel, from the same centralized
+# go_enrich() (MSigDB 2026) result computed above (was previously the old enrichGO /
+# org.Hs.eg.db phospho_gobp_analysis.csv).
+go_bp_phospho |>
+  filter(direction == "Upregulated", adjusted_p_value < 0.01, n_proteins > 5) |>
+  slice_min(adjusted_p_value, n = 15) |>
+  go_dotplot(size_range = c(0.7, 3))
+
+ggsave('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/phospho_go_enrichment/go_bp_phosphosites_up_TLR4.pdf',
+       width = 3.2, height = 2, device = cairo_pdf)
+```
+
+```{r, fig.width=3.2, fig.height=1.4}
+# Opposite panel: 2-fold down phosphosites in TLR4 (log2_FC < -1), same centralized
+# go_enrich() (MSigDB 2026) result computed above.
+go_bp_phospho |>
+  filter(direction == "Downregulated", adjusted_p_value < 0.01, n_proteins > 5) |>
+  slice_min(adjusted_p_value, n = 15) |>
+  go_dotplot(size_range = c(0.7, 3))
+
+ggsave('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/phospho_go_enrichment/go_bp_phosphosites_down_TLR4.pdf',
+       width = 3.2, height = 1.4, device = cairo_pdf)
+```
+
+# Reactivity enrichment
+
+### GO
+```{r}
+# Reactivity proteins (those with a significant reactivity change) and the measured
+# WP proteome used as the enrichment universe (modality-specific background).
+proteins_symbol <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv' |>
+  read_csv(show_col_types = FALSE) |>
+  filter(reactivity_change) |>
+  pull(protein) |>
+  unique()
+
+wp_universe <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/01_unenriched proteomics/03_results/20250219_3reps/04_results/volcano_plots/volcano_data.csv' |>
+  read_csv(show_col_types = FALSE) |>
+  pull(protein) |>
+  unique()
+
+# GO CC over-representation via the shared engine (MSigDB 2026 GO, propagated, simplified).
+# Background = measured WP proteome.
+go_cc_reactivity <- go_enrich(proteins_symbol, ont = "CC", background = NULL, simplify_cutoff = 0.5)
+write_csv(go_cc_reactivity, "go_cc_reactivity.csv")
+```
+
+```{r, fig.height=2, fig.width=2}
+go_cc_reactivity |>
+  filter(adjusted_p_value < 0.2, n_proteins > 5) |>
+  arrange(adjusted_p_value) |>
+  go_dotplot()
+
+ggsave('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/reactivity_go/CC_go_results.pdf', height = 2, width = 2)
+```
+
+
+
+
+
+
+```{r}
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/Figure 5_Phosphoproteomics/panels/volcano_plot/expression-normalized_phosphorylation_table.xlsx' |> 
+  readxl::read_excel() |> 
+  mutate(
+    Endocytosis = protein %in% endocytosis,
+    immune_relevant = protein %in% immune_relevant_all
+  ) |> write_csv('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/Figure 5_Phosphoproteomics/panels/volcano_plot/expression-normalized_phosphorylation_table.csv')
+```

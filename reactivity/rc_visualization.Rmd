@@ -1,0 +1,2877 @@
+
+
+```{r}
+
+source('../macrophage_figure_setting.R')
+library(colorspace)
+library(ggalluvial)
+results_dir <- "/Users/henrysanford/dev/test_data/macrophage/02_reactivity/03_rc_analysis/20250225_3reps/06_results"
+
+
+protein_list_dir <- "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Exhaustion manuscript/02_Mass-spectrometry data/Reference lists/"
+```
+
+## Cysteines quantified barplot
+
+```{r}
+reactivity_vs_wp_dir <- paste0(results_dir, "/03_reactivity_vs_wp")
+#paste0(reactivity_vs_wp_dir, "/reactivity_changes_long_format.csv") %>% 
+'/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/02_reactivity/03_rc_analysis/reactivity_output/test/median_for_5+_peptides/output/reactivity_changes_long_format.csv' %>%
+  read_csv(show_col_types = FALSE) %>%
+  mutate(
+    LFC_tmt_abpp = log2( rc_percent_control / 100),
+    LFC_WP = log2( wp_percent_control / 100),
+    direction_of_reactivity_change = str_to_title(direction_of_reactivity_change)
+    
+    )-> full_df
+full_df
+```
+
+
+
+```{r, fig.height=1.8, fig.width=2}
+AXIS_TXT_MRGN = -5
+
+
+quant_colors <- c(
+  "reactivity changes" = "indianred2",
+  "analyzed" = "grey39",
+  "not analyzed" = "grey90"
+)
+
+full_df %>%
+  group_by(protein, rc_n_peptides) %>%
+  summarise(rc_any = any(reactivity_change)) %>%
+  mutate(
+    reactivity_change = case_when(
+      rc_n_peptides == 1 ~ "not analyzed",
+      rc_any == TRUE ~ "reactivity changes",
+      TRUE ~ "analyzed"
+    ),
+    binned_quantified_peptides = case_when(
+      (rc_n_peptides > 6) ~ "7+",
+      (rc_n_peptides > 4) ~ "5-6",
+      TRUE ~ as.character(rc_n_peptides)
+    ),
+    reactivity_change = factor(reactivity_change, levels = rev(names(quant_colors)))
+  ) %>%
+  arrange(reactivity_change, ascending = TRUE) %>%
+  distinct(.keep_all = TRUE) %>%
+  ggplot(aes(x = binned_quantified_peptides, fill = reactivity_change)) +
+  geom_bar(show.legend = FALSE, width = BARPLOT_WIDTH) +
+  scale_fill_manual(values = quant_colors,
+                    breaks = names(quant_colors),
+                    name = "") +
+  guides(fill = guide_legend(ncol = 1, hjust = 1)) +
+  scale_y_break(c(200, 200), scales = 1 / 1.2, expand = c(0, 0)) +
+  scale_x_discrete() +
+  my_theme() +
+  theme(
+    legend.position =  "top",
+    legend.justification = "left",
+    legend.key.spacing = unit(-0.1, "mm"),
+    legend.key.spacing.x = unit(500, "mm"),
+    legend.margin = margin(b = -5),
+    # reverse annoying ggbreak changes
+    axis.line.y.right = element_blank(),
+    axis.ticks.y.right = element_blank(),
+    axis.text.y.right = element_blank(),
+    axis.title.x = element_text(
+      margin = margin(t = AXIS_TXT_MRGN),
+      color = "black",
+      family = FONT_FAMILY,
+      size = FONT_SIZE,
+      hjust = 0.5
+    ),
+    axis.title.y = element_text(
+      margin = margin(r = AXIS_TXT_MRGN),
+      color = "black",
+      family = FONT_FAMILY,
+      size = FONT_SIZE,
+      vjust = 0.5
+    ),
+    panel.border = element_blank(),
+    axis.line.x = AXIS_LINE,
+    axis.line.y = AXIS_LINE
+  ) +
+  ylab("number of proteins") +
+  xlab("quantified cysteines") +
+  ylim(0, 2400)
+
+save_plot(
+  paste0(results_dir, "/07_barplots/num_peptides_rc"),
+  height = 2,
+  width = 2
+)
+```
+
+
+## WP RC scatterplot
+
+### All cysteines
+
+```{r}
+reactivity_vs_wp_dir <- paste0(results_dir, "/03_reactivity_vs_wp")
+
+paste0(
+  reactivity_vs_wp_dir,
+  "/all-conditions-vs_M0_rc_wp_comparison.csv"
+) %>%
+  read_csv() %>%
+  drop_na("LFC_WP") %>%
+  filter(LFC_tmt_abpp != Inf) -> df
+
+max(df$LFC_tmt_abpp) %>% print()
+max(df$LFC_WP) %>% print()
+```
+
+
+```{r, fig.width=4, fig.height=2}
+  
+  scatterplot_palette <- c("Higher" = SIG_UP_COL, 
+                  "Lower" = SIG_DOWN_COL, 
+                  "Unchanged or\nexpression based" = UNCHANGED_COL)
+  
+  map <- setNames(c("Higher",
+                    "Lower",
+                    "Unchanged or\nexpression based"),
+                  c("Higher",
+                    "Lower", 
+                    "Unchanged or expression based"))
+  
+protein_scatterplot <- function(
+    full_df,
+    gene_name, 
+    fil_condition, 
+    dir
+    ){
+  dir <- paste0(
+    dir, 
+    "/",
+    fil_condition,
+    "_rc_vs_wp"
+  )
+  
+  full_df$cysteine_reactivity_regulation <- map[unlist(
+    full_df$cysteine_reactivity_regulation
+    )]
+  
+  full_df %>% 
+    filter(condition == fil_condition) %>% 
+    mutate(name = paste0(protein, "_", residue)) -> df
+  
+  # the limit of the plot should be the maximum
+  # whole proteome or reactivity LFC
+  plot_lim <- max(
+    max(abs(df$LFC_WP)),
+    max(abs(df$LFC_tmt_abpp))
+  )
+  breaks <- c(-round(plot_lim):round(plot_lim))
+  
+  df %>% 
+    filter(protein == gene_name) -> label_data
+  high_cutoff = log2(1.6)
+  low_cutoff = log2(1/1.6)
+  df %>% 
+    ggplot(aes(x=LFC_tmt_abpp, 
+               y=LFC_WP, 
+               fill=cysteine_reactivity_regulation)) + 
+    geom_point(
+               color="black" ,
+               size = 1,
+               stroke=POINT_STROKE / 2,
+               shape=21, 
+               alpha=0.6,
+               show.legend = FALSE) + 
+    geom_point(data=label_data, 
+               color="black" ,
+               size = 1,
+               stroke=POINT_STROKE / 2,
+               shape=21, 
+               show.legend = FALSE) + 
+    geom_rect(data = df[1,],
+              aes(xmin = -Inf, 
+                  xmax = -1, 
+                  ymax = Inf, 
+                  ymin = low_cutoff), 
+              color = "black", 
+              linewidth = LINE_WIDTH,
+              fill="transparent", 
+              linetype = "dotted") +
+    geom_rect(data = df[1,],aes(xmin = 1, 
+                                xmax = Inf, 
+                                ymax = high_cutoff, 
+                                ymin = -Inf),
+              color = "black", 
+              linewidth = LINE_WIDTH,
+              fill="transparent", 
+              linetype = "dotted") +
+    scale_fill_manual(values = scatterplot_palette) +
+    scale_x_continuous(breaks = breaks,
+                       limits = c(-plot_lim, plot_lim)) +
+    scale_y_continuous(breaks = breaks,
+                       limits = c(-plot_lim, plot_lim)) +
+    guides(fill=guide_legend(
+      title=paste0("Cysteine reactivity in ", fil_condition))) + 
+   geom_text_repel(data = label_data, 
+                     aes(label=name), 
+                    color = "black",
+                     size=1.76,
+                    segment.size = LINE_WIDTH,
+                     min.segment.length = unit(0, 'lines'), 
+                     nudge_y=2.5, 
+                     show.legend = FALSE) + 
+    xlab(paste0("cysteine reactivity log2(", fil_condition,"/", control_condition ,")")) +
+    ylab(paste0("protein expression log2(", fil_condition,"/", control_condition ,")")) +
+    my_theme() +
+    theme(aspect.ratio=1, 
+          legend.key.spacing.y = unit(-2,"mm"),
+          legend.key = element_blank(),)-> plot
+    print(plot)
+    save_plot(dir, 2, 2)
+}
+for(condition in conditions){
+ protein_scatterplot(
+  df,
+  c(""),
+  condition,
+  reactivity_vs_wp_dir
+  ) 
+}
+```
+
+
+
+## Reactivity dotplots 
+
+
+
+
+
+
+### All conditions
+
+
+```{r, fig.height=2.3, fig.width=4.1}
+lbl_nudge <- 0.4
+reactivity_vs_wp_dir <- paste0(results_dir, "/03_reactivity_vs_wp")
+fil_condition <- "D8C"
+rc_dotplot <- function(df,
+                       targets,
+                       title,
+                       fil_condition,
+                       control_condition,
+                       output_dir,
+                       ratio_aspect = 1,
+                       ht = 4,
+                       wd = 2,
+                       y_max = 3,
+                       y_min = -3) {
+  df %>%
+    filter(condition == fil_condition) %>%
+    filter(protein %in% targets) %>%
+    mutate(
+      `Cysteine reactivity in D8C` = case_when(
+        reactivity_change != TRUE ~ "Unchanged",
+        LFC_tmt_abpp > 0 ~ "Higher",
+        LFC_tmt_abpp < 0 ~ "Lower",
+        TRUE ~ "Unchanged"
+      ),
+      protein = factor(protein, levels = targets)
+    ) -> plt_df
+  
+  lbl_data <- plt_df %>%
+    filter(reactivity_change)
+  
+  wp_data <- plt_df %>%
+    select(uniprot, protein, condition, LFC_WP) %>%
+    mutate(`Cysteine reactivity in D8C` = "Protein expression") %>%
+    distinct()
+  
+  plt_df %>%
+    arrange(by = "protein") %>%
+    ggplot(aes(x = protein, y = LFC_tmt_abpp, fill = `Cysteine reactivity in D8C`)) +
+    geom_hline(yintercept = c(1, -1),
+               linetype = "dashed",
+               size = LINE_WIDTH) +
+    # cysteine data
+    geom_point(
+      size = POINT_SIZE - 0.75,
+      shape = 21,
+      color = "black",
+      alpha = 0.9,
+      stroke = POINT_STROKE
+    ) +
+    # residue labels
+    geom_text(
+      data = lbl_data,
+      mapping = aes(
+        y = LFC_tmt_abpp + case_when(
+          LFC_tmt_abpp > 0 ~ lbl_nudge,
+          LFC_tmt_abpp < 0 ~ -lbl_nudge,
+          TRUE ~ lbl_nudge
+        ),
+        color = `Cysteine reactivity in D8C`,
+        label = residue
+      ),
+      size = FONT_SIZE,
+      size.unit = "pt",
+      show.legend = FALSE
+    ) +
+    # whole proteome data (triangle)
+    geom_point(
+      data = wp_data,
+      aes(x = protein, y = LFC_WP),
+      shape = 24,
+      color = "black",
+      size = POINT_SIZE - 0.75,
+      stroke = POINT_STROKE,
+      alpha = 0.9
+    ) +
+    # aesthetics
+    my_theme() +
+    scale_fill_manual(values = regulation_colors,
+                      breaks = names(regulation_colors)) +
+    scale_color_manual(values = regulation_colors,
+                       breaks = names(regulation_colors)) +
+    scale_y_continuous(breaks = round(y_min):round(y_max),
+                       limits = c(y_min, y_max)) +
+    guides(fill = guide_legend(byrow = TRUE,
+                               nrow = TRUE)) +
+    theme(
+      axis.text.x = element_text(
+        color = "black",
+        angle = 45,
+        size = FONT_SIZE,
+        family = "Arial",
+        vjust = 1,
+        hjust = 1
+      ),
+      legend.key.spacing.y = unit(-2.5, "mm"),
+      legend.margin = margin(b = -15),
+      legend.position = "top",
+      #aspect.ratio = ratio_aspect,
+      legend.title = element_text(margin = margin(b = -2)),
+      legend.key = element_blank(),
+      legend.title.position = "top",
+      legend.key.spacing = unit(0, "mm"),
+      legend.spacing.y = unit(-0, "mm"),
+      legend.spacing = unit(0, "mm")
+    ) +
+    labs(y = substitute(
+      paste('cysteine reactivity, log'[2],
+            "(", n, "/", m, ")"),
+      list(n = fil_condition, m = control_condition)
+    ),
+    x = "") +
+    guides(fill = guide_legend(ncol = 2)) -> plot
+  print(plot)
+  save_plot(paste0(output_dir, title),
+            height = ht,
+            width = wd)
+}
+
+
+
+
+```
+
+```{r, fig.height=2.3, fig.width=4}
+trafficking_proteins <- c("DCTN1","AP3D1","VPS13C","SNX6","TMF1","GOLGA3","GOLGB1","STXBP3","TRIP11","NBAS","VPS11","VPS18","PLEKHM2","STAB1","DIAPH2","CORO1C")
+
+rc_dotplot(
+  df = full_df,
+  targets = trafficking_proteins,
+  title = "Trafficking proteins",
+  fil_condition = "TLR4",
+  control_condition = "M0",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  #y_max = 10,
+  #y_min = -5,
+  y_max = 4.3,
+  y_min = -2.2,
+  ht = 2.3,
+  wd = 4
+)
+
+full_df %>%
+  filter(
+    condition =="TLR4"
+  ) 
+```
+
+```{r, fig.width=1, fig.height=2.8}
+
+macrophage_label <- "Macrophage, TLR4/M0"
+tcell_label <- "T cells, Activated/Control"
+# data from cell 2020
+data <- data.frame(
+  uniprot = "P00390",
+  residue = c("C102","C377","C107","C484","C328","C278"),
+  protein = "T cells, Activated/Control",
+  condition = "TLR4",
+  reactivity_change = c(TRUE, FALSE, FALSE, FALSE, FALSE, FALSE ),
+  direction_of_reactivity_change = c("Higher", "unchanged", "unchanged", "unchanged", "unchanged", "unchanged"),
+  LFC_tmt_abpp = log2(c(4.29,0.84,0.68,0.54,0.54,0.47)),
+  LFC_WP = log2(0.59)
+)
+# combine with macrophage data
+full_df |> 
+  select(uniprot,residue, protein, condition, reactivity_change,direction_of_reactivity_change ,LFC_tmt_abpp,LFC_WP) |> 
+  filter(protein == "GSR", condition == "TLR4") |> 
+  mutate(protein = "Macrophage, TLR4/M0") |> 
+  rbind(data) |> 
+  rc_dotplot(
+  targets = c(macrophage_label, tcell_label),
+  title = "GSR",
+  fil_condition = "TLR4",
+  control_condition = "M0",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  #y_max = 10,
+  #y_min = -5,
+  y_max = 2.6,
+  y_min = -1.5,
+  ht = 2.8,
+  wd = 1
+)
+
+results_dir
+  
+  
+```
+
+
+
+
+
+```{r, fig.height=1.5, fig.width=2}
+GAP_GEF_proteins <- c(
+  #GAPs
+"ARAP1" , "TBC1D15", "ARHGAP4",
+# GEFs
+"TIAM1", "TRIO", "GAPVD1"
+)
+
+
+lbl_nudge <- 0.4
+
+fil_condition <- "D8C"
+rc_dotplot_t <- function(df,
+                       targets,
+                       title,
+                       fil_condition,
+                       control_condition,
+                       output_dir,
+                       ratio_aspect = 1,
+                       ht = 4,
+                       wd = 2,
+                       y_max = 3,
+                       y_min = -3) {
+  df %>%
+    filter(condition == fil_condition) %>%
+    filter(protein %in% targets) %>%
+    mutate(
+      `Cysteine reactivity in D8C` = case_when(
+        reactivity_change !=TRUE ~ "Unchanged",
+        LFC_tmt_abpp > 0 ~ "Higher",
+        LFC_tmt_abpp < 0 ~ "Lower",
+        TRUE ~ "Unchanged"
+      ),
+      protein = factor(protein, levels = rev(targets))
+    ) -> plt_df
+  
+  lbl_data <- plt_df %>%
+    filter(reactivity_change)
+  
+  wp_data <- plt_df %>%
+    select(uniprot, protein, condition, LFC_WP) %>%
+    mutate(`Cysteine reactivity in D8C` = "Protein expression") %>%
+    distinct()
+  
+  plt_df %>%
+    arrange(by = "protein") %>%
+    ggplot(aes(y = protein, x = LFC_tmt_abpp, fill = `Cysteine reactivity in D8C`)) +
+    geom_vline(xintercept = c(1, -1),
+               linetype = "dashed",
+               size = LINE_WIDTH) +
+    # cysteine data
+    geom_point(
+      size = POINT_SIZE - 0.75,
+      shape = 21,
+      color = "black",
+      alpha = 0.9,
+      stroke = POINT_STROKE
+    ) +
+    # residue labels
+    geom_text(
+      data = lbl_data,
+      mapping = aes(
+        x = LFC_tmt_abpp + case_when(
+          LFC_tmt_abpp > 0 ~ lbl_nudge,
+          LFC_tmt_abpp < 0 ~ -lbl_nudge,
+          TRUE ~ lbl_nudge
+        ),
+        color = `Cysteine reactivity in D8C`,
+        label = residue
+      ),
+      size = FONT_SIZE,
+      size.unit = "pt",
+      show.legend = FALSE
+    ) +
+    # whole proteome data (triangle)
+    geom_point(
+      data = wp_data,
+      aes(y = protein, x = LFC_WP),
+      shape = 24,
+      color = "black",
+      size = POINT_SIZE - 0.75,
+      stroke = POINT_STROKE,
+      alpha = 0.9
+    ) +
+    # aesthetics
+    my_theme() +
+    scale_fill_manual(values = regulation_colors,
+                      breaks = names(regulation_colors)) +
+    scale_color_manual(values = regulation_colors,
+                       breaks = names(regulation_colors)) +
+    scale_x_continuous(breaks = round(y_min):round(y_max),
+                       limits = c(y_min, y_max)) +
+    guides(fill = guide_legend(byrow = TRUE,
+                               nrow = TRUE)) +
+     theme(
+    #   axis.text.x = element_text(
+    #     color = "black",
+    #     angle = 45,
+    #     size = FONT_SIZE,
+    #     family = "Arial",
+    #     vjust = 1,
+    #     hjust = 1
+    #   ),
+      legend.key.spacing.y = unit(-2.5, "mm"),
+      legend.margin = margin(b = -15),
+      legend.position = "top",
+      #aspect.ratio = ratio_aspect,
+      legend.title = element_text(margin = margin(b = -2)),
+      legend.key = element_blank(),
+      legend.title.position = "top",
+      legend.key.spacing = unit(0, "mm"),
+      legend.spacing.y = unit(-0, "mm"),
+      legend.spacing = unit(0, "mm")
+    ) +
+    labs(x = substitute(
+      paste('cysteine reactivity, log'[2],
+            "(", n, "/", m, ")"),
+      list(n = fil_condition, m = control_condition)
+    ),
+    y = NULL) +
+    guides(fill = guide_legend(ncol = 2)) -> plot
+  print(plot)
+  save_plot(paste0(output_dir, title),
+            height = ht,
+            width = wd)
+}
+
+rc_dotplot_t(
+  df = full_df,
+  targets = GAP_GEF_proteins,
+  title = "GAP_GEF_proteins_t",
+  fil_condition = "TLR4",
+  control_condition = "M0",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  y_max = 5.3,
+  y_min = -2.2,
+  ht = 1.7,
+  wd = 2.3
+)
+```
+
+
+
+
+```{r, fig.width = 5, fig.height = 2.349}
+#TODO add full_df as argument
+facetted_multi_condition_dotplot <-
+  function(targets,
+           display_conditions,
+           title,
+           additional_cysteines_to_label = c(),
+           fig_height,
+           fig_width,
+           output_dir,
+           control_condition = "M0",
+           y_min = -4.5,
+           y_max = 2) {
+    
+    max_val <- max(full_df$LFC_tmt_abpp[is.finite(full_df$LFC_tmt_abpp)], na.rm = TRUE)
+
+  full_df <- full_df |>
+    mutate(LFC_tmt_abpp = case_when(
+      LFC_tmt_abpp == Inf  ~  max_val,
+      LFC_tmt_abpp == -Inf ~ -max_val,
+      .default = LFC_tmt_abpp
+    ))
+  
+  full_df |> filter(protein == "ARHGAP31") |> arrange(desc(LFC_tmt_abpp)) |> print()
+    full_df %>%
+      filter(protein %in% targets,
+             condition %in% display_conditions) %>%
+      mutate(`PPAT reactivity in D8C` = direction_of_reactivity_change,
+      condition = factor(condition, levels = names(cols)),
+      protein = factor(protein, levels = targets)) -> plt_df
+    
+    plt_df %>%
+      filter(reactivity_change == TRUE |
+               residue %in% additional_cysteines_to_label) -> lbl_data
+    
+    plt_df %>% select(uniprot, protein, condition, LFC_WP) %>% 
+      mutate(`PPAT reactivity in D8C` = "Protein expression") %>%
+      distinct() -> wp_data
+    
+    plt_df$protein <- factor(plt_df$protein, levels = targets)
+    plt_df %>%
+      ggplot(aes(x = condition, y = LFC_tmt_abpp, fill = `PPAT reactivity in D8C`)) +
+      geom_hline(yintercept =c(-1, 1),
+                 linetype = "dashed",
+                 size = LINE_WIDTH) +
+      # cysteine data
+      geom_point(
+        size = POINT_SIZE - 0.75,
+        shape = 21,
+        color = "black",
+        alpha = 0.9,
+        stroke = POINT_STROKE
+      ) +
+      # residue labels
+      geom_text(
+        data = lbl_data,
+        mapping = aes(
+          y = LFC_tmt_abpp + case_when(LFC_tmt_abpp > 0 ~ 0.3,
+                                       LFC_tmt_abpp < 0 ~ -0.3,
+                                       TRUE ~ 0.3),
+          color = `PPAT reactivity in D8C`,
+          label = residue
+        ),
+        size = FONT_SIZE,
+        size.unit = "pt",
+        show.legend = FALSE
+      ) +
+      # whole proteome data (triangle)
+      geom_point(
+        data = wp_data,
+        aes(x = condition, y = LFC_WP),
+        shape = 24,
+        color = "black",
+        size = POINT_SIZE - 0.75,
+        stroke = POINT_STROKE,
+        alpha = 0.9
+      ) +
+      # aesthetics
+      my_theme() +
+      scale_fill_manual(values = regulation_colors,
+                        breaks = names(regulation_colors)) +
+      scale_color_manual(values = regulation_colors,
+                         breaks = names(regulation_colors)) +
+      scale_y_continuous(breaks = round(y_min):round(y_max),
+                         limits = c(y_min, y_max)) +
+      theme(
+        legend.key.spacing.y = unit(-2.5, "mm"),
+        legend.margin = margin(b = -15),
+        legend.position = "top",
+        strip.text = element_text(
+          family = FONT_FAMILY,
+          color = "black",
+          size = FONT_SIZE,
+          margin = margin(t = 0)
+        ),
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        panel.spacing = unit(0, "mm"),
+        legend.title = element_text(margin = margin(b = -2)),
+        legend.key = element_blank(),
+        legend.title.position = "top",
+        legend.key.spacing = unit(0, "mm"),
+        legend.spacing.y = unit(-0, "mm"),
+        legend.spacing = unit(0, "mm")
+      ) +
+      labs(y = substitute(
+        paste('cysteine reactivity, log'[2], "(FC from ", m,")"),
+        list(n = fil_condition, m = control_condition)
+      ),
+      x = NULL,
+      fill = NULL) +
+      facet_wrap( ~ protein, ncol = length(unique(plt_df$protein)), strip.position = "bottom") +
+      guides(fill = guide_legend(ncol = 2)) +
+    theme(
+      axis.text.x = element_text(
+        color = "black",
+        angle = 45,
+        size = FONT_SIZE,
+        family = "Arial",
+        vjust = 1,
+        hjust = 1
+      ) ,     
+      panel.border = element_rect(color = "black", linetype = "solid", linewidth = LINE_WIDTH))-> plot
+    print(plot)
+    save_plot(
+      paste0(output_dir, title),
+      height = fig_height,
+      width = fig_width
+    )
+  }
+
+autophagy_proteins <- c(
+  "AKAP11","ATG7","ATG9A","EPG5","LRBA","PIK3C2A","VPS13C","UVRAG"
+)
+full_df <- full_df %>%
+  mutate(direction_of_reactivity_change = case_when(
+    direction_of_reactivity_change == "unchanged" ~ "Unchanged",
+    TRUE ~ direction_of_reactivity_change
+  ))
+```
+
+
+```{r, fig.width = 4.2, fig.height = 2.349}
+
+facetted_multi_condition_dotplot(
+  targets = c("ATG7","ATG9A","EPG5","FYCO1","NRBF2","PIK3C2A","UVRAG","VPS13C"),
+  display_conditions = c("TLR4", "TLR8","STING"),
+  additional_cysteines_to_label = c(),
+  title = "trim_48STING",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  fig_height = 2.349, 
+  fig_width =4.2,
+  y_max = 4.2,
+  y_min = -1
+)
+
+
+```
+
+### CDC 42 interactors
+
+```{r, fig.width=6, fig.height=3.8}
+
+facetted_multi_condition_dotplot <-
+  function(targets,
+           display_conditions,
+           title,
+           additional_cysteines_to_label = c(),
+           fig_height,
+           fig_width,
+           output_dir,
+           control_condition = "M0",
+           y_min = -4.5,
+           y_max = 2) {
+    
+    max_val <- max(full_df$LFC_tmt_abpp[is.finite(full_df$LFC_tmt_abpp)], na.rm = TRUE)
+
+  full_df <- full_df |>
+    mutate(LFC_tmt_abpp = case_when(
+      LFC_tmt_abpp == Inf  ~  max_val,
+      LFC_tmt_abpp == -Inf ~ -max_val,
+      .default = LFC_tmt_abpp
+    ))
+  
+  full_df |> filter(protein == "ARHGAP31") |> arrange(desc(LFC_tmt_abpp)) |> print()
+    full_df %>%
+      filter(protein %in% targets,
+             condition %in% display_conditions) %>%
+      mutate(`PPAT reactivity in D8C` = direction_of_reactivity_change,
+      condition = factor(condition, levels = names(cols)),
+      protein = factor(protein, levels = targets)) -> plt_df
+    
+    plt_df %>%
+      filter(reactivity_change == TRUE |
+               residue %in% additional_cysteines_to_label) -> lbl_data
+    
+    plt_df %>% select(uniprot, protein, condition, LFC_WP) %>% 
+      mutate(`PPAT reactivity in D8C` = "Protein expression") %>%
+      distinct() -> wp_data
+    
+    plt_df$protein <- factor(plt_df$protein, levels = targets)
+    plt_df %>%
+      ggplot(aes(x = condition, y = LFC_tmt_abpp, fill = `PPAT reactivity in D8C`)) +
+      geom_hline(yintercept =c(-1, 1),
+                 linetype = "dashed",
+                 size = LINE_WIDTH) +
+      # cysteine data
+      geom_point(
+        size = POINT_SIZE - 0.75,
+        shape = 21,
+        color = "black",
+        alpha = 0.9,
+        stroke = POINT_STROKE
+      ) +
+      # residue labels
+      geom_text(
+        data = lbl_data,
+        mapping = aes(
+          y = LFC_tmt_abpp + case_when(LFC_tmt_abpp > 0 ~ 0.3,
+                                       LFC_tmt_abpp < 0 ~ -0.3,
+                                       TRUE ~ 0.3),
+          color = `PPAT reactivity in D8C`,
+          label = residue
+        ),
+        size = FONT_SIZE,
+        size.unit = "pt",
+        show.legend = FALSE
+      ) +
+      # whole proteome data (triangle)
+      geom_point(
+        data = wp_data,
+        aes(x = condition, y = LFC_WP),
+        shape = 24,
+        color = "black",
+        size = POINT_SIZE - 0.75,
+        stroke = POINT_STROKE,
+        alpha = 0.9
+      ) +
+      # aesthetics
+      my_theme() +
+      scale_fill_manual(values = regulation_colors,
+                        breaks = names(regulation_colors)) +
+      scale_color_manual(values = regulation_colors,
+                         breaks = names(regulation_colors)) +
+      scale_y_continuous(breaks = round(y_min):round(y_max),
+                         limits = c(y_min, y_max)) +
+      theme(
+        legend.key.spacing.y = unit(-2.5, "mm"),
+        legend.margin = margin(b = -15),
+        legend.position = "top",
+        strip.text = element_text(
+          family = FONT_FAMILY,
+          color = "black",
+          size = FONT_SIZE,
+          margin = margin(t = 0)
+        ),
+        strip.background = element_blank(),
+        strip.placement = "outside",
+        panel.spacing = unit(0, "mm"),
+        legend.title = element_text(margin = margin(b = -2)),
+        legend.key = element_blank(),
+        legend.title.position = "top",
+        legend.key.spacing = unit(0, "mm"),
+        legend.spacing.y = unit(-0, "mm"),
+        legend.spacing = unit(0, "mm")
+      ) +
+      labs(y = substitute(
+        paste('cysteine reactivity, log'[2], "(FC from ", m,")"),
+        list(n = fil_condition, m = control_condition)
+      ),
+      x = NULL,
+      fill = NULL) +
+      facet_wrap( ~ protein, ncol = length(unique(plt_df$protein)), strip.position = "bottom") +
+      guides(fill = guide_legend(ncol = 2)) +
+    theme(
+      axis.text.x = element_text(
+        color = "black",
+        angle = 45,
+        size = FONT_SIZE,
+        family = "Arial",
+        vjust = 1,
+        hjust = 1
+      ) ,     
+      panel.border = element_rect(color = "black", linetype = "solid", linewidth = LINE_WIDTH))-> plot
+    print(plot)
+    save_plot(
+      paste0(output_dir, title),
+      height = fig_height,
+      width = fig_width
+    )
+  }
+
+fil_condition <- "TLR4"
+facetted_multi_condition_dotplot(
+  targets = c(
+    "ARHGAP21",
+    "ARHGAP31",
+    "ARHGAP4",
+    "ARHGEF7",
+    "DCTN1",
+    "DIAPH2",
+    "DNMBP",
+    "DOCK4",
+    "DOCK7",
+    "DOCK8",
+    "IQGAP1",
+    "PREX1",
+    "TIAM1",
+    "TNK2"
+  ),
+  display_conditions = c("TLR1-2", "TLR4"),
+  additional_cysteines_to_label = c(),
+  title = "cdc42_interactors",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  fig_height = 3.8,
+  fig_width = 6,
+  y_max = 7.5,
+  y_min = -1.1
+)
+full_df
+results_dir
+```
+
+
+
+
+
+```{r}
+library(tidyverse)
+reactivity_changes <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv' |> 
+  read_csv(show_col_types = FALSE)
+
+reactivity_changes |> 
+  filter(protein =="ARHGAP31") |> 
+  arrange(desc(rc_percent_control))
+```
+
+
+
+
+
+
+
+```{r, fig.width = 5, fig.height = 2.349}
+phos_homeostasis_proteins <- c("INPP5D","FIG4","PIK3C2A","PI4KA","PLCB2","PLCB3","VAC14","PIP5K1A")
+facetted_multi_condition_dotplot(
+  targets = phos_homeostasis_proteins,
+  display_conditions = c("TLR4", "TLR7", "STING"),
+  additional_cysteines_to_label = c(),
+  title = "phos_homeostasis_proteins_TLR4_TLR7_STING",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  fig_height = 2.349, 
+  fig_width = 5,
+  y_max =4.2,
+  y_min = -1.9
+)
+
+```
+
+
+```{r, fig.width = 4.5, fig.height = 2.349}
+facetted_multi_condition_dotplot(
+  targets = autophagy_proteins,
+  display_conditions = c("TLR4", "TLR7", "STING"),
+  additional_cysteines_to_label = c(),
+  title = "autophagy proteins_TLR4_TLR7_STING",
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  fig_height = 2.349, 
+  fig_width =4.5,
+  y_max = 4.2,
+  y_min = -1
+)
+```
+
+
+
+
+
+
+```{r, fig.height=2.4, fig.width=2.7}
+multi_condition_rc_plot <- function(df,
+                                    proteins,
+                                    output_dir,
+                                    ht = 2.5,
+                                    wd = 2,
+                                    rotate_x_labels = TRUE,
+                                    control_condition = "M0",
+                                    brk_size = 100) {
+df %>%
+    filter(protein %in% proteins) %>%
+    mutate(residue_loc = 
+             str_split_fixed(
+               str_split_fixed(residue, "C", 2)[, 2], ";", 2)[, 1] %>% 
+             as.numeric()) -> map2k_df
+  
+  map2k_df %>% filter(reactivity_change == "True") -> label_data
+  
+  max_tmt <- max(map2k_df$LFC_tmt_abpp)
+  map2k_df %>%
+    filter(reactivity_change != "True") %>%
+    ggplot(aes(x = reorder(residue, residue_loc), y = LFC_tmt_abpp)) +
+    theme_minimal() +
+    geom_hline(
+      yintercept = 0,
+      linetype = "solid",
+      size = LINE_WIDTH,
+      color = "black"
+    ) +
+    labs(
+      x = NULL,
+      y = substitute(
+      paste('cysteine reactivity, log'[2],
+            "(FC from ", m, ")"),
+      list(m = control_condition)
+    )
+    ) +
+    geom_beeswarm(
+      size = POINT_SIZE - 1,
+      shape = 21,
+      col = "black",
+      show.legend = FALSE,
+      fill = "lightgrey",
+      width = 0.5,
+      height = 0,
+      stroke = POINT_STROKE,
+      alpha = 0.7
+    ) +
+    # geom_text(
+    #   data = label_data,
+    #   mapping = aes(
+    #     x = residue,
+    #     y = LFC_tmt_abpp + (1.25 / 16) * max_tmt,
+    #     label = condition,
+    #     color = condition
+    #   ),
+    #   inherit.aes = FALSE,
+    #   show.legend = FALSE,
+    #   size = FONT_SIZE,
+    #   size.unit = "pt"
+    # ) +
+    geom_beeswarm(
+      data = label_data,
+      mapping = aes(fill = condition),
+      size = POINT_SIZE - 1,
+      shape = 21,
+      col = "black",
+      alpha = 0.7,
+      corral.width = 2,
+      cex = 3,
+      show.legend = FALSE,
+      stroke = POINT_STROKE / 2
+    ) +
+    scale_fill_manual(values = cols) +
+    scale_color_manual(values = cols) +
+    my_theme() +
+    theme(
+      strip.background = element_blank(),
+      panel.spacing = unit(2, "mm"),
+      strip.text = element_text(
+        color = "black",
+        size = 6,
+        family = "Arial"
+      ),
+      panel.grid.major = element_line(colour = "grey90", linewidth=LINE_WIDTH),
+        panel.border =element_blank(),
+      axis.line.x = element_line(color = "black", linetype = "solid", linewidth = LINE_WIDTH),
+      axis.line.y = element_line(color = "black", linetype = "solid", linewidth = LINE_WIDTH)
+    ) +
+    scale_y_continuous(breaks = seq.int(0, 4000, by = brk_size)) +
+    facet_grid(cols = vars(protein),space = "free", scales = "free") -> plt
+  if (rotate_x_labels) {
+    plt <- plt +
+      theme(
+        axis.text.x = element_text(
+          color = "black",
+          angle = 45,
+          size = 5,
+          family = "Arial",
+          vjust = 1,
+          hjust = 1
+        )
+      )
+  }
+  
+  print(plt)
+  save_plot(paste0(output_dir, paste(proteins, collapse = "_")),
+            height = ht,
+            width = wd)
+}
+
+df <-paste0(reactivity_vs_wp_dir,
+         "/rc_df_long_format.csv") %>%
+    read.csv() %>% filter(condition != "TLR9")
+
+multi_condition_rc_plot(
+  df = df,
+  proteins = autophagy_proteins,
+  output_dir = paste0(results_dir, "/06_dotplots/"),
+  ht = 2.1, wd = 2.7,
+  rotate_x_labels = TRUE,
+  brk_size = 1
+)
+
+
+
+
+
+```
+## boxplot
+
+```{r, fig.height=2, fig.width=6}
+expression_and_reactivity_boxplot_all_conditions <-
+  function(condition_to_display,
+           control_condition,
+           proteins_to_plot,
+           whole_proteome_table,
+           reactivity_table,
+           ht,
+           wd) {
+    cysteine_seperator <- ", " # for aggregated cysteines
+    
+    si_matrix <- whole_proteome_table %>%
+      # select columns needed for plot
+      select(starts_with(c(
+        conditions, c("protein", control_condition)
+      ))) %>%
+      filter(protein %in% proteins_to_plot) %>%
+      column_to_rownames("protein")
+    
+    # calculate fold change to median of control condition
+    wp_df <- (si_matrix / apply(si_matrix[, grepl(control_condition, colnames(si_matrix))], 1, median, na.rm =TRUE)) %>%
+      rownames_to_column("protein") %>%
+      # pivot to long format for plotting
+      pivot_longer(cols = -protein,
+                   names_to = "condition_replicate",
+                   values_to = "channel_ratio") %>%
+      # drop replicates where the protein was not quantified
+      drop_na() %>%
+      separate_wider_delim(
+        cols =condition_replicate,
+        delim = "_",
+        names = c("condition", "technical_replicate", "experiment"),
+        too_many = "drop"
+      ) %>% mutate(
+        residue = "C0",
+        regulation = "Protein expression",
+        reactivity_change = FALSE
+      ) 
+    
+    si_matrix <- reactivity_table %>%
+      filter(protein %in% proteins_to_plot) %>%
+      # select columns needed for plot
+      select(starts_with(c(
+        conditions, c("protein", "residue", control_condition)
+      ))) %>% mutate(residue = gsub(';', cysteine_seperator ,residue)) %>%
+      # concat protein and residue
+      unite(rowname, protein, residue) %>%
+      column_to_rownames()
+    # calculate fold change to median of control condition
+    df <- (si_matrix / apply(si_matrix[, grepl(control_condition, colnames(si_matrix))], 1, median, na.rm =TRUE)) %>%
+      rownames_to_column("protein_residue") %>%
+      # pivot to long format for plotting
+      pivot_longer(cols = -protein_residue,
+                   names_to = "condition_replicate",
+                   values_to = "channel_ratio") %>%
+      # drop missing values
+      drop_na() %>%
+      separate_wider_delim(
+        cols = c("protein_residue"),
+        delim = "_",
+        names = c("protein", "residue")
+      ) %>%
+      separate_wider_delim(
+        cols = c("condition_replicate"),
+        delim = "_",
+        names = c("condition", "experiment", "technical_replicate"),
+        too_many = "drop"
+      ) %>% merge(
+      y = full_df %>%
+        select(protein, residue, reactivity_change, condition) %>%
+        mutate(residue =gsub(",", cysteine_seperator, residue)),
+      by = c("protein", "residue", "condition"),
+      all.x = TRUE
+    ) %>% mutate(regulation = "Reactivity") %>%
+      rbind(wp_df) %>%
+      mutate(
+        # converting strings to factors so proteins and conditions have correct order
+        protein = factor(protein, levels = proteins_to_plot),
+        condition = factor(condition, levels = c(control_condition, conditions)),
+        # get numeric index of cysteine for sorting
+        residue_loc = str_split_fixed(residue, "C", 2)[, 2],
+        residue_loc = str_split_fixed(residue_loc, cysteine_seperator, 2)[, 1] %>% as.numeric(),
+        # format reactivity change boolean to string
+        reactivity_change = as.character(reactivity_change), 
+        reactivity_change = replace_na(reactivity_change, "FALSE")
+      ) %>%
+      filter(condition != "TLR9")
+    
+    # set plot dimensions
+    # adding extra buffer on the bottom for annotation
+    max_plot_value <- max(log2(df$channel_ratio)) * 1.1
+    min_plot_value <- min(log2(df$channel_ratio)) * 1.2
+    margin_value <- min_plot_value  + 0.05 * (max_plot_value - min_plot_value)
+    
+    plot <- df %>%
+      unique() %>%
+      ggplot(aes(
+        x = reorder(residue, residue_loc),
+        fill = condition,
+        y = log2(channel_ratio),
+        shape = regulation
+      )) +
+      geom_boxplot(
+        outliers = FALSE,
+        width = 0.7,
+        lwd = LINE_WIDTH,
+        show.legend = FALSE,
+        alpha = 0.6,
+        position = position_dodge(width = 0.8)
+      ) +
+      # replicate level LFC values
+      geom_beeswarm(
+        col = "black",
+        stroke = POINT_STROKE,
+        show.legend = FALSE,
+        size = 0.9,
+        alpha = 0.7,
+        dodge.width = 0.8
+      ) +
+      facet_rep_grid(~ protein, scales = "free_x", space = "free", ) +
+      my_theme() +
+      theme(
+        plot.title = element_text(
+          size = 6,
+          color = "black",
+          family = "Helvetica",
+          hjust = 0.5
+        ),
+        strip.background = element_blank(),
+        panel.spacing = unit(2, "mm"),
+        strip.text = element_text(
+          size = 8,
+          family = "Helvetica",
+          color = "black"
+        ),
+        strip.clip = "off",
+        panel.grid.major.y = element_line(linewidth = LINE_WIDTH, linetype = "solid", color = "grey90")
+      ) +
+      # boxes indicating reactivity changes
+      geom_point(
+        #data = rc_changes,
+        mapping = aes(
+          y = (min_plot_value + margin_value) / 2,
+          color = condition,
+          alpha = reactivity_change
+        ),
+        size = 1.5,
+        show.legend = FALSE,
+        shape = 22,
+        position = position_dodge(width = 0.8),
+        stroke = POINT_STROKE *1.5
+      ) +
+      # lines separating residues
+      geom_vline(
+        xintercept = 1.5:length(unique(df$residue)),
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "grey90"
+      ) + 
+      # margin line
+      geom_hline(
+        yintercept = margin_value,
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "black"
+        )  +
+      labs(y = substitute(paste('log'[2],"(FC from ", m, ")"),list(m = control_condition)),
+           x = "",
+           fill = "Reactivity") +
+      scale_fill_manual(values = cols) +
+      scale_alpha_discrete(range = c(0,1)) +
+      scale_color_manual(values = cols) +
+      scale_shape_manual(values = c("Reactivity" = 21,"Protein expression" = 24)) +
+      scale_y_continuous(limits = c(min_plot_value, max_plot_value), expand = expansion(mult = c(0, 0)))
+    
+    print(plot)
+    
+    save_plot(
+      paste0(results_dir, "/05_boxplots/", paste(proteins_to_plot, collapse = "_")),
+      width = wd,
+      height = ht
+    )
+    
+    return(df)
+  }
+
+'/Users/henrysanford/dev/test_data/macrophage/01_whole_proteome/03_results/3_reps/03_combined_files/1/07_combfiles_percctrl_wp_min_2_replicates.csv' %>%
+  read_csv(show_col_types = FALSE) -> wp_table
+
+'/Users/henrysanford/dev/test_data/macrophage/02_reactivity/03_rc_analysis/20250225_3reps/04_combined_files/2/07_combfiles_cysaggr_percctrl_rc_min_2_replicates.csv' %>%
+  read_csv(show_col_types = FALSE) -> rc_table
+
+ expression_and_reactivity_boxplot_all_conditions(
+  whole_proteome_table = wp_table,
+  reactivity_table = rc_table,
+  proteins_to_plot = c("TBCK", "PPP1R21"),
+  control_condition = "M0",
+  ht = 2,
+  wd = 6
+) 
+```
+
+
+```{r, fig.width=2.5, fig.height=2}
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("ARAP1"),
+control_condition = "M0",
+ht = 2,
+wd = 3)
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("ARHGEF1"),
+control_condition = "M0",
+ht = 2,
+wd = 2.5)
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("CDC42"),
+control_condition = "M0",
+ht = 2,
+wd =2)
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("AP3D1"),
+control_condition = "M0",
+ht = 2,
+wd =2)
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("PIP5K1A"),
+control_condition = "M0",
+ht = 2,
+wd =2)
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("RAB12"),
+control_condition = "M0",
+ht = 2,
+wd =2)
+
+
+full_df %>% filter(protein == "RAB12", condition == "TLR7")
+```
+
+
+```{r, fig.height=2, fig.width=2.2}
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("GSR"),
+control_condition = "M0",
+ht = 2,
+wd = 2.2)
+
+```
+
+
+```{r, fig.height=2, fig.width=10}
+
+expression_and_reactivity_boxplot_all_conditions(
+whole_proteome_table = wp_table,
+reactivity_table = rc_table,
+proteins_to_plot = c("PLEC"),
+control_condition = "M0",
+ht = 2,
+wd = 7)
+
+full_df %>%
+  arrange(desc(rc_n_peptides)) %>%
+  filter(reactivity_change)
+```
+
+
+```{r, fig.height=2.1, fig.width=3.2}
+expression_boxplot_all_conditions <-
+  function(condition_to_display,
+           control_condition,
+           proteins_to_plot,
+           whole_proteome_table,
+           ht,
+           wd) {
+    whole_proteome_table %>%
+      # select columns needed for plot
+      select(starts_with(c(
+        conditions, c("protein", control_condition)
+      ))) %>%
+      filter(protein %in% proteins_to_plot) %>%
+      # concat protein and residue
+      column_to_rownames("protein") -> si_matrix
+    print(si_matrix)
+    
+    # calculate fold change to median of control condition
+    fold_change = si_matrix / apply(si_matrix[, grepl(control_condition, colnames(si_matrix))], 1, median, na.rm =
+                                      T)
+    
+    
+    fold_change %>%
+      rownames_to_column("protein") %>%
+      # pivot to long format for plotting
+      pivot_longer(cols = colnames(.)[-1],
+                   names_to = "condition_replicate",
+                   values_to = "channel_ratio") %>%
+      # drop missing values
+      drop_na() %>%
+      separate_wider_delim(
+        cols = c("condition_replicate"),
+        delim = "_",
+        names = c("condition", "technical_replicate", "experiment"),
+        too_many = "drop"
+      ) %>%
+      filter(protein %in% proteins_to_plot) -> wp_df
+    wp_df$median_rc <- 0
+    wp_df$residue <- "Expression"
+    wp_df$regulation <- "Protein expression"
+    wp_df$residue_loc <- 0
+    
+    wp_df %>%
+      group_by(protein) %>%
+      mutate(median_wp = median(channel_ratio)) -> wp_df
+    wp_df %>% select(protein, median_wp) -> wp_stats
+    
+    wp_df$reactivity_change = FALSE
+    wp_df$LFC_tmt_abpp = 0
+    wp_df$wp_rc_ratio = 0
+    wp_df$regulation = "Protein expression"
+    
+    wp_df -> df
+    df$protein <- factor(df$protein, levels = proteins_to_plot)
+    max_plot_value <- max(log2(df$channel_ratio))
+    df %>% filter(condition != "TLR9") %>% mutate(condition = factor(condition, levels = c(control_condition, conditions))) ->  df
+    
+    breaks <- c(-1,0, 1)
+    df %>%
+      unique() %>%
+      ggplot(aes(
+        x = protein,
+        fill = condition,
+        y = log2(channel_ratio),
+        shape = regulation
+      )) +
+      geom_hline(
+        yintercept = breaks,
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "grey90"
+      ) +
+      geom_boxplot(
+        outliers = FALSE,
+        width = 0.5,
+        lwd = LINE_WIDTH,
+        show.legend = FALSE,
+        alpha = 0.8,
+        position = position_dodge(width = 0.8)
+      ) +
+      geom_beeswarm(
+        #corral.width = 1.2,
+        #cex = 2,
+        col = "black",
+        stroke = POINT_STROKE,
+        show.legend = FALSE,
+        size = 1,
+        alpha = 0.9,
+        dodge.width = 0.8
+      ) +
+      my_theme() +
+      theme(
+        plot.title = element_text(
+          size = 6,
+          color = "black",
+          family = "Helvetica",
+          hjust = 0.5
+        ),
+        strip.background = element_blank(),
+        panel.spacing = unit(2, "mm"),
+        #panel.border = element_blank(),
+        strip.text = element_text(
+          size = 8,
+          family = "Helvetica",
+          color = "black"
+        ),
+        #axis.line.x = AXIS_LINE,
+        #axis.line.y = AXIS_LINE,
+        strip.clip = "off"
+      ) +
+      labs(y = substitute(paste('log'[2],
+                                "(FC from ", m, ")"),
+                          list(m = control_condition)),
+           x = "",
+           fill = "Reactivity") +
+      scale_fill_manual(values = cols) +
+      scale_alpha_discrete(range = c(0,1)) +
+      scale_color_manual(values = cols) +
+      scale_shape_manual(values = c(
+        "Higher" = 21,
+        "Unchanged" = 21,
+        "Lower" = 21,
+        "Protein expression" = 24
+        
+      )) +
+      geom_vline(
+        xintercept = 1.5:length(unique(df$protein)),
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "grey90"
+      ) +
+      scale_y_continuous(breaks = breaks, limits = c(-1.5, 1.5))-> plot
+    file_name <- paste(proteins_to_plot, collapse = "_")
+    
+    print(plot)
+    
+    save_plot(
+      paste0(results_dir, "/05_boxplots/", file_name),
+      width = wd,
+      height = ht
+    )
+  }
+ferry_proteins <- c(
+  "TBCK",
+  "PPP1R21",
+  "FERRY3",
+  "CRYZL1",
+  "GATD1"
+)
+expression_boxplot_all_conditions(
+  whole_proteome_table = wp_table,
+  proteins_to_plot = ferry_proteins,
+  control_condition = "M0",
+  ht = 2.1 - 0.2255,
+  wd = 3.2
+)
+```
+
+
+## reactivity change barplot
+
+```{r}
+reactivity_change_barplot <- function(
+    cys_df,
+    highlight_uniprots,
+    highlight_name,
+    height = 2,
+    width = 3,
+    lower_rc_max = 80,
+    higher_rc_max = 500,
+    highlight_color = "#28ae80",
+    rotate_x_labels = FALSE
+){
+x_axis_exand <- 0.2
+colors <- c(
+  "Other" = "grey90"
+)
+colors[highlight_name] = highlight_color
+cys_df$direction_of_reactivity_change <- factor(cys_df$direction_of_reactivity_change,c("Higher", "Lower"))
+
+if (length(highlight_uniprots) > 0){
+cys_df %>%
+  mutate(group = case_when(uniprot %in% highlight_uniprots ~ highlight_name,
+                                   TRUE ~ "Other")) -> cys_df
+}
+cys_df$group <- factor(cys_df$group, levels = names(colors))
+cys_df$condition <- factor(cys_df$condition, levels = conditions)
+cys_df %>%
+  ggplot(aes(x = condition, fill = group)) -> mito_plot
+mito_plot +
+    geom_bar(
+           stat="count", show.legend = TRUE, width = 0.7, col = "black", size = LINE_WIDTH) + 
+  geom_text(
+    data = cys_df %>% filter(direction_of_reactivity_change == "Higher"),
+    stat = "count", 
+            inherit.aes = FALSE,
+            mapping = aes(x = condition, label = ..count..), 
+            vjust = -0.1, 
+            size = FONT_SIZE, 
+            size.unit = "pt") + 
+    geom_text(
+    data = cys_df %>% filter(direction_of_reactivity_change == "Lower"),
+    stat = "count", 
+            inherit.aes = FALSE,
+            mapping = aes(x = condition, label = ..count..), 
+            vjust = 1.1, 
+            size = FONT_SIZE, 
+            size.unit = "pt") + 
+  facet_grid("direction_of_reactivity_change", scales = "free_y", space = "free") + 
+  guides(fill = guide_legend(ncol =1)) +  
+  legend_theme() +
+  my_theme() +
+  theme(
+    strip.background = element_blank(),
+    panel.spacing = unit(0, "mm"),
+  ) +
+  xlab("") +
+  scale_fill_viridis_d(direction = -1) +
+  scale_fill_discrete(type = colors) +
+  ylab("number of reactivity changes") + 
+  scale_y_continuous(expand = c(0,0)) +
+  facetted_pos_scales(
+    y = list(
+      scale_y_continuous(expand = expansion(mult = c(0,x_axis_exand)), limits = c(0, higher_rc_max)),
+      scale_y_continuous(expand = expansion(mult = c(x_axis_exand,0)), trans = "reverse", limits = c(lower_rc_max,0))
+      )
+    ) -> plt
+  if (rotate_x_labels) {
+    plt <- plt +
+      theme(
+        axis.text.x = element_text(
+          color = "black",
+          angle = 45,
+          size = FONT_SIZE,
+          family = "Arial",
+          vjust = 1,
+          hjust = 1
+        )
+      )
+  }
+print(plt)
+save_plot(
+  fn = paste0(results_dir, "/07_barplots/", highlight_name, "_rc_barplot"),
+  width = width,
+  height = height
+)
+}
+
+
+```
+
+```{r, fig.width=3.1, fig.height=1.7}
+
+protein_list_dir <-
+  '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/00_reference lists/GO_term_lists/'
+
+for (list_dir in list.dirs(protein_list_dir, recursive = FALSE)) {
+  list_name <- str_split(list_dir, "//")[[1]][2]
+  if (list_name != "Vesicle-mediated transport"){
+    next
+  }
+  # MSigDB 2026 lists (GO_updates.md migration) are gene-symbol-only; map to the
+  # UniProt accessions measured in the data so the uniprot-based highlighting is unchanged.
+  list_genes <- paste0(list_dir, "/02_genes_matching_query.csv") %>%
+    read_csv(show_col_types = FALSE) %>%
+    pull(genes)
+  list_uniprots <- full_df %>%
+    filter(protein %in% list_genes) %>%
+    pull(uniprot) %>%
+    unique()
+
+  reactivity_change_barplot(
+    cys_df = full_df %>% filter(reactivity_change),
+    highlight_uniprots = list_uniprots,
+    highlight_name = list_name,
+    lower_rc_max = 170,
+    higher_rc_max = 390,
+    height =1.7, 
+    width = 3.1,
+    highlight_color = "#237D41",
+    rotate_x_labels = TRUE
+  )
+}
+```
+```{r, fig.width=2.8, fig.height=2}
+hn <- "Phosphorylation\nsite on peptide"
+"/Users/henrysanford/dev/test_data/macrophage/02_reactivity/03_rc_analysis/20250225_3reps/05_reactivity_changes/output_median_for_5+_peptides/cysteine_reactivity_changes.csv" %>%
+  read_csv() %>% 
+  filter(condition != "TLR9") %>%
+  mutate(group = case_when(phosphorylation == TRUE ~ hn, TRUE ~ "Other")) -> df
+
+
+reactivity_change_barplot(
+  cys_df = df,
+  highlight_uniprots = c(),
+  highlight_name = hn,
+    lower_rc_max = 130,
+    higher_rc_max = 400,
+    height =2, 
+    width = 2.8,
+    highlight_color = "#5CBED7",
+    rotate_x_labels = TRUE
+)
+```
+
+
+
+
+```{r}
+
+paste0("/Users/henrysanford/dev/test_data/macrophage/02_reactivity/03_rc_analysis/20250225_3reps/05_reactivity_changes/output_median_for_5+_peptides/cysteine_reactivity_changes.csv") %>%
+  read_csv(show_col_types = FALSE) %>% filter(condition != "TLR9") -> cys_df
+
+  reactivity_change_barplot(
+    cys_df = cys_df,
+    highlight_uniprots = list_uniprots,
+    highlight_name = list_name,
+    lower_rc_max = 130,
+    higher_rc_max = 420,
+    height =2, 
+    width = 3.1,
+    highlight_color = "#237D41",
+    rotate_x_labels = TRUE
+  )
+```
+
+
+
+```{r, fig.height=4, fig.width=22}
+
+df %>% 
+  filter(phosphorylation == TRUE, condition != "TLR9") %>%
+  mutate(reactivity_change_int = 1,
+         name = paste0(protein, "_", residue)) %>%
+  select(name, condition, reactivity_change_int) %>% 
+  pivot_wider(id_cols = c("name"), names_from = condition, values_from = reactivity_change_int) %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  column_to_rownames("name") %>%
+  t() -> mat
+
+cn = colnames(mat)
+pdf("phosphosites.pdf", width = 22, height = 4.5)
+Heatmap(mat, show_column_names = FALSE, 
+       row_dend_width = unit(17, "mm"),
+        bottom_annotation = HeatmapAnnotation(
+        text = anno_text(cn, rot = 45, offset = unit(1, "npc"), just = "right"),
+        annotation_height = max_text_width(cn)
+    ), col = colorRamp2(c(0,1), c("white", "#5CBED7")),
+    rect_gp = gpar(col = "grey", lwd = LINE_WIDTH * 2),show_heatmap_legend = FALSE) -> ht
+
+print(ht)
+dev.off()
+print(ht)
+```
+
+
+### Phosphoproteomics volcano plot
+```{r}
+volcano_data
+```
+
+
+```{r, fig.width=2, fig.height=2}
+library(ggbreak)
+results_dir <- "/Users/henrysanford/dev/test_data/phospho/tiff_3reps/output/3reps/05_results"
+paste0(
+  results_dir, "/volcano_plot/volcano_data.csv"
+) %>% 
+  read_csv(show_col_types = FALSE) %>%
+  mutate(residue_label = ID) -> volcano_data
+sig_up_col <- "indianred2"
+sig_down_col <- "steelblue2"
+unchanged_col <- "lightgrey"
+
+alphas_two = c("Significant Down" = 0.6, 
+  "Significant Up" = 0.6, 
+  "Not Significant Down" = 0.2, 
+  "Not Significant Up" = 0.2, 
+  "Not Significant" = 0.2,
+  "Significant but <1.5 FC" = 0.2)
+
+cols_three = c("Significant Down" = sig_down_col, 
+  "Significant Up" = sig_up_col, 
+  "Not Significant Down" = sig_down_col, 
+  "Not Significant Up" = sig_up_col, 
+  "Not Significant" = unchanged_col,
+  "Significant but <1.5 FC" = unchanged_col)
+
+volcano_data$residue_label <- gsub(";", ",", volcano_data$residue_label)
+
+volcano_data$`Regulation_phospho - TLR4 vs. M0 (5634 Residues)` <- factor(
+  volcano_data$`Regulation_phospho - TLR4 vs. M0 (5634 Residues)`, 
+  levels = rev(names(cols_three))
+  )
+
+volcano_data %>% 
+  filter(`ID` %in% c("STAT4_Y693", "NFKB2_S872", "NFKB1_S937,S941","NFKB1_S907")) -> label_data
+fc_label = expression('phosphorylation, log'[2]*'(TLR4/M0)')
+p_value_label = expression('-log'[10]*'(p-value)')
+volcano_data %>%
+  arrange(`Regulation_phospho - TLR4 vs. M0 (5634 Residues)`) %>%
+  ggplot(
+    aes(x = `log2_FC_phospho - TLR4 vs. M0 (5634 Residues)`,
+        y = `-log10_pval_phospho - TLR4 vs. M0 (5634 Residues)`,
+        label = residue_label,
+        fill = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`,
+        alpha = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`)
+    ) + 
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", size=LINE_WIDTH) +
+  geom_vline(xintercept = c(-FC_CUTOFF, FC_CUTOFF), linetype = "dashed", size=LINE_WIDTH) + 
+  geom_point(
+    shape = 21,
+    size = 1,
+    stroke = POINT_STROKE /2,
+    show.legend = FALSE
+  ) + 
+  geom_text_repel(data = label_data,
+                  mapping = aes(color = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`),
+                  size = 1.940,
+                  nudge_x = 8,
+                  box.padding = 1,
+                  color = "black",
+                  min.segment.length = 0,
+                  segment.size = LINE_WIDTH,
+                  show.legend = FALSE,  alpha = 1, max.overlaps = Inf) +
+  my_theme() + 
+  scale_x_continuous(limits = c(-4,18)) +
+  #scale_x_break(breaks = c(7, 16), space = 0.01, scales = 0.1) +
+  scale_fill_manual(values = cols_three) + 
+  scale_color_manual(values = cols_three) + 
+  scale_alpha_manual(values = alphas_two) +
+  xlab(fc_label) +
+  ylab(p_value_label)
+
+ggsave(paste0(results_dir, "/volcano_plot/volcano_plot.svg"), width = 2, height = 2)
+ggsave(paste0(results_dir, "/volcano_plot/volcano_plot.png"), width = 2, height = 2)
+```
+
+```{r, fig.width=2, fig.height=2}
+volcano_data %>%
+  arrange(`Regulation_phospho - TLR4 vs. M0 (5634 Residues)`) %>%
+  mutate(x_range = ifelse(`log2_FC_phospho - TLR4 vs. M0 (5634 Residues)` <= 8, "≤ 8", "> 8")) %>%
+  mutate(x_range = fct_relevel(x_range, "> 8", "≤ 8")) %>%  # Explicit ordering
+  arrange(x_range) %>%
+  ggplot(
+    aes(x = `log2_FC_phospho - TLR4 vs. M0 (5634 Residues)`,
+        y = `-log10_pval_phospho - TLR4 vs. M0 (5634 Residues)`,
+        label = residue_label,
+        fill = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`,
+        alpha = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`)
+    ) + 
+  geom_point(
+    shape = 21,
+    size = 1,
+    stroke = POINT_STROKE /2,
+    show.legend = FALSE
+  ) + 
+  geom_text_repel(data = label_data %>% 
+                    mutate(x_range = ifelse(`log2_FC_phospho - TLR4 vs. M0 (5634 Residues)` <= 8, "≤ 8", "> 8")) %>%
+                    mutate(x_range = fct_relevel(x_range, "> 8", "≤ 8")),
+                  mapping = aes(color = `Regulation_phospho - TLR4 vs. M0 (5634 Residues)`),
+                  size = 1.940,
+                  nudge_x = 8,
+                  box.padding = 1,
+                  color = "black",
+                  min.segment.length = 0,
+                  segment.size = LINE_WIDTH,
+                  show.legend = FALSE,  alpha = 1, max.overlaps = Inf) +
+  facet_grid(cols = vars(x_range), scales = "free_x", space = "free") +
+  geom_hline(data = data.frame(x_range = "≤ 8", y = -log10(0.05)), aes(yintercept = y), linetype = "dashed", size = LINE_WIDTH, inherit.aes = FALSE) +
+  geom_vline(data = data.frame(x_range = "≤ 8", x = c(-FC_CUTOFF, FC_CUTOFF)), aes(xintercept = x), linetype = "dashed", size = LINE_WIDTH, inherit.aes = FALSE) +
+  my_theme() + 
+  theme(strip.text = element_blank(),
+        panel.spacing = unit(0, "lines")) +
+  scale_fill_manual(values = cols_three) + 
+  scale_color_manual(values = cols_three) + 
+  scale_alpha_manual(values = alphas_two) +
+  xlab(fc_label) +
+  ylab(p_value_label)
+```
+
+### Heatmap
+
+```{r, fig.height=1.5, fig.width=5.4}
+
+GEF <- c("GBF1","ARHGEF7","DNMBP","DOCK4","DOCK7","TIAM1","RAB3IL1","DENND4A","DENND4C","GAPVD1","RAPGEF1","AKAP13","ARHGEF1","TRIO","DOCK8","PREX1")
+GAP <- c("AGFG2","GIT1","ARAP1","TBC1D15","TBC1D2","TBC1D8","TBC1D9B","FLCN","SIPA1","RASA3","ARHGAP31","ARHGAP4","ARHGAP21","MYO9B","ARHGAP30")
+GTPase <- c("CDC42", "EFL1","SEPTIN9","RAB12")
+
+full_df %>%
+  mutate(gef_gap = case_when(protein %in% GTPase ~ "GTPase", protein %in% GEF ~ "GEF", TRUE ~ "GAP"), condition = factor(condition, levels = rev(conditions))) %>%
+  arrange(condition) %>%
+  filter(
+    protein %in% c(GEF, GAP,GTPase)
+  ) %>% 
+  filter(direction_of_reactivity_change != "unchanged") %>%
+  group_by(protein, condition, gef_gap) %>%
+  summarise(
+    direction_of_reactivity_change = paste(unique(direction_of_reactivity_change),  collapse = ", ")
+  ) %>%
+  mutate(
+    direction_of_reactivity_change = case_when(
+      (grepl(",",direction_of_reactivity_change)) ~ "Both",
+      TRUE ~ direction_of_reactivity_change
+      )
+  ) %>%
+  ggplot(aes(x = protein, y = condition, fill = direction_of_reactivity_change)) +
+  geom_tile(linewidth = 0.25, color = "white", show.legend = FALSE) +
+      scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  my_theme() + 
+        theme(
+        axis.text.x = element_text(
+          color = "black",
+          angle = 45,
+          size = 6,
+          family = "Arial",
+          vjust = 1,
+          hjust = 1
+        ),
+                panel.spacing = unit(1, "lines"),
+        strip.background = element_blank(),
+        strip.clip = "off"
+      ) +
+  scale_fill_manual(values = c("Higher" = SIG_UP_COL, "Lower" = SIG_DOWN_COL, "Both" = "purple"))+ 
+  facet_grid(cols = vars(gef_gap), scales = "free_x", space = "free")
+save_plot(
+  paste0(results_dir, "/08_heatmap/gef_gap.svg"), width = 4.8, height = 1.5
+)
+```
+
+
+
+
+# Alluvial plot
+
+```{r, fig.height=1.9, fig.width=5}
+
+cols <- c(
+  "TLR1-2"= "#EC2427",
+   "M0" = "#AAAAAA",
+  "TLR3" = "#F58420",
+  "TLR4" = "#FFCC31",
+  "TLR7" = "#4869B2",
+  "TLR8" = "#5CBED7",
+  "TLR9" = "#237D41",
+  "STING" = "#742D16"
+)
+
+# Create alluvial plot
+create_alluvial <- function(df, columns) {
+  
+  # Count flows
+  flow_data <- df %>%
+    group_by(across(all_of(columns))) %>%
+    summarise(n = n(), .groups = "drop")
+  
+  
+  # Create the plot
+  p <- ggplot(flow_data,
+              aes(axis1 = .data[[columns[1]]],
+                  axis2 = .data[[columns[3]]],
+                  axis3 = .data[[columns[4]]],
+                  axis4 = .data[[columns[2]]],
+                  axis5 = .data[[columns[5]]],
+                  y = n)) +
+    geom_alluvium(
+                  aes(fill = .data[[columns[1]]]), 
+                  alpha = 0.7,
+                  width = 2/3) +
+    geom_stratum(
+      aes(fill = after_stat(stratum)),
+      width = 2/3, 
+                 color = "black",
+                 linewidth = 0.25 / 2) +
+    geom_text(stat = "stratum", 
+              aes(label = paste(after_stat(stratum), after_stat(count))),
+              size = 5.5 / .pt,  # Convert pt to mm for ggplot
+              family = "Arial") +
+    theme_minimal() +
+    theme(
+      text = element_text(family = "Arial", size = 6),
+      axis.text.y = element_blank(),
+      axis.title = element_blank(),
+      panel.grid = element_blank(),
+      legend.position = "none"
+    ) +scale_fill_manual(values = rep(lighten(unname(cols), amount = 0.25), 12))
+  
+  return(p)
+}
+
+flags <- c("reactive" = TRUE, "unreactive" = FALSE)
+# Load  data
+df <- read_csv("/Users/henrysanford/Downloads/formatted_cross_ref.csv")
+  
+columns_to_plot <- c(
+  "Complex",
+  "Depth of Conservation (# of Organisms)",
+  "pPSE",
+  "structure_group",
+  "am_class"
+)
+for (name in names(flags)){
+
+  # Create plot
+  p <- create_alluvial(df |> filter(reactivity_change == flags[name]), columns_to_plot)
+  
+  # Save as PDF (3 inches tall x 6 inches wide)
+  ggsave(
+    paste0(name, "_alluvial_plot.pdf"),
+    plot = p,
+    width = 5,
+    height = 1.9,
+    units = "in",
+    device = cairo_pdf  # Better font handling
+  )
+  
+}
+
+
+
+
+```
+
+```{r, fig.height=2, fig.width=1.5}
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/06_macrophage/macrophage/reactivity/species.csv' %>%
+  read_csv(show_col_types = FALSE) %>%
+  select(uniprot, residue, mm10, `D. melanogaster`, `C. elegans`, `S. cerevisiae`) %>%
+  unique()
+
+df %>%
+  pivot_longer(cols = c(mm10, `D. melanogaster`, `C. elegans`, `S. cerevisiae`)) %>%
+  drop_na() %>%
+  mutate(value = factor(value, levels = c(0,1)), 
+         name = case_when(name == "mm10" ~ "M. musculus", TRUE ~ name),
+         name = factor(name, levels = c("M. musculus","D. melanogaster", "C. elegans", "S. cerevisiae" ))) %>%
+  arrange(name) %>%
+  group_by(name, value) %>%
+  summarise(count = n(), .groups = "drop_last") %>%
+  mutate(percentage = count / sum(count) * 100) %>%
+  filter(value == 1) %>%
+  ggplot(aes(x = name, y = percentage)) +
+  geom_col(width = 0.7, fill = cols[["TLR8"]], color = "black", size = LINE_WIDTH) +
+  geom_text(aes(label = sprintf("%.1f%%", percentage)), size = FONT_SIZE_MM ,vjust = -0.5) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05)), limits = c(0, 100)) +
+  my_theme() +
+       theme(axis.text.x = element_text(
+        color="black",angle=45, size=FONT_SIZE, family="Arial", vjust = 1, hjust=1)) + labs(x = NULL, y = "percent cysteine conservation")
+
+save_plot("conservation", height = 2, width = 1.5)
+```
+
+# GO term correlaiton
+
+```{r, fig.height=7.9, fig.width=4.5}
+col_location <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/06_macrophage/macrophage/whole_proteome/'
+df <- NULL
+for (cond in conditions){
+  for (color in c("violet", "teal-yellow")){
+    for (dir in c("Up", "Down")){ # not including "both" category
+      fn <- paste0(col_location, cond,"_", color,"_", dir, ".csv")
+      if(file.exists(fn)){
+        df <- fn %>%
+          read_csv(show_col_types = FALSE) %>%
+          mutate(
+            direction = dir,
+            condition = cond,
+            col = color,
+            term = Term  # standard schema from go_enrich() (macrophage_figure_setting.R)
+          ) %>%
+          filter(adjusted_p_value < 0.05, n_proteins > 5, ontology == "BP")  %>%
+          rbind(df)
+        print(nrow(df))
+      }
+    }
+  }
+}
+
+df %>%
+  mutate(
+    condition = factor(condition, levels = conditions),
+    dir = factor(direction, levels = c( "Down", "Up"))
+  ) %>%
+  arrange(direction) %>%
+  group_by(col, condition, direction, term) %>%
+  arrange(direction) %>%
+  mutate(
+    term = fct_inorder(str_wrap(term, 50)),
+    col = case_when(
+      col == "teal-yellow" ~ "teal-yellow (antidirectional)",
+      TRUE ~ "violet (RNA only)"
+    )
+  ) %>%
+  ggplot(aes(
+    x = direction,
+    y = term,
+    size = n_proteins,
+    fill = -log10(adjusted_p_value)
+  )) +
+  geom_point(shape = 21, stroke = LINE_WIDTH) +
+  my_theme()  +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = expression("-log"[10] * "(FDR)"),
+    size = "proteins"
+  ) +
+  facet_grid(
+    rows = vars(col),
+    cols = vars(condition),
+    space = "free",
+    scales = "free"
+  ) +
+  theme(
+    strip.background = element_blank(),
+    strip.clip = "off",
+    panel.grid.major = element_line(color = "grey90", linewidth = LINE_WIDTH)
+  ) +
+  scale_fill_gradient(low= "#b3cde3", high = "#810f7c") +
+  theme(
+    axis.text.x = element_text(
+      color = "black",
+      angle = 45,
+      size = FONT_SIZE,
+      family = FONT_FAMILY,
+      vjust = 1,
+      hjust = 1
+    ),
+    axis.text.y = element_text(
+      color = "black",
+      family = FONT_FAMILY,
+      size = 5
+    ),
+    strip.text = element_text(size = FONT_SIZE, color = "black", family = FONT_FAMILY),
+    panel.spacing = unit(0, "mm")
+  )+ scale_y_discrete(limits = rev) + 
+  scale_size_continuous(range = c(1, 4))
+
+
+ggsave('/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/Figure 2_Unenriched proteomics analysis/Panels/wp_vs_rnaseq_go_term/rna_vs_wp_correlation_go_term_analysis_BP.pdf', height = 7.9, width = 4.5)
+```
+
+# GO:BP enrichment of TLR4 reactivity changes
+
+```{r, fig.height=2, fig.width=3.19}
+go_out_dir <- "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 2_Reactivity_part1_GTPase regulation/Panels/go_enrichment"
+
+# TLR4 proteins (gene symbols) with a significant reactivity change, from the
+# reactivity_polars.ipynb output.
+tlr4_reactive <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv' |>
+  read_csv(show_col_types = FALSE) |>
+  filter(reactivity_change, condition == "TLR4") |>
+  pull(protein) |>
+  unique()
+
+# Centralized Fisher-exact GO:BP over-representation (go_enrich() in
+# macrophage_figure_setting.R: clusterProfiler::enricher on MSigDB 2026 GO, simplified).
+# Background = NULL (all annotated genes), matching the original enrichGO default universe.
+go_bp_tlr4 <- go_enrich(tlr4_reactive, ont = "BP", background = NULL, simplify_cutoff = 0.5)
+write_csv(go_bp_tlr4, file.path(go_out_dir, "go_results.csv"))
+
+go_bp_tlr4 |>
+  filter(adjusted_p_value < 0.05, n_proteins > 5) |>
+  slice_min(adjusted_p_value, n = 20) |>
+  go_dotplot(size_range = c(1, 3), title = "GO:BP enrichment analysis (TLR4)")
+
+ggsave(file.path(go_out_dir, "go_enrichment.pdf"), width = 230/72, height = 144/72, device = cairo_pdf)
+```
+
+# Cross-omics GO enrichment of the venn terms
+
+Complements the GO-term venn diagrams in reactivity_polars.ipynb (which show raw overlap of a
+term's genes with each omic's changes): here we test whether each term is statistically enriched
+among each omic's full set of significant changes, via go_enrich() (Fisher-exact over MSigDB C5 GO).
+Term gene sets therefore come from msigdbr, not the venn GMT/query lists, so counts differ slightly.
+
+```{r}
+prefix <- "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/"
+dirs <- c("Significant Up", "Significant Down")
+
+# Changed-protein (gene symbol) set per omic, all TLR4 vs. M0. Mirrors omic_change_sets() in
+# reactivity_polars.ipynb; reactivity is restricted to condition == "TLR4" to match the
+# standalone GO:BP enrichment above (go_bp_tlr4).
+omic_changes <- list(
+  "Reactivity (TLR4)" = read_csv(paste0(prefix, "02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv"),
+                          col_select = c(protein, condition, reactivity_change), show_col_types = FALSE) |>
+    filter(reactivity_change, condition == "TLR4") |> pull(protein) |> unique(),
+  # Upregulated-only, matching the panel F "phosphosites up in TLR4" set in
+  # phosphoproteomics/visualization.Rmd (log2FC > 1 & p < 0.05, unique proteins).
+  "Phospho (TLR4)" = read_csv(paste0(prefix, "05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.csv"),
+                              col_select = c(protein, `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`, `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`), show_col_types = FALSE) |>
+    filter(`log2_FC_phospho - TLR4 vs. M0 (9591 Residues)` > 1,
+           `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)` > -log10(0.05)) |> pull(protein) |> unique(),
+  "Expression (TLR4)" = read_csv(paste0(prefix, "01_unenriched proteomics/03_results/20250219_3reps/04_results/volcano_plots/volcano_data_long_format.csv"),
+                                 col_select = c(protein, condition, Regulation), show_col_types = FALSE) |>
+    filter(condition == "TLR4", Regulation %in% dirs) |> pull(protein) |> unique()
+)
+
+# Terms of interest. max_gs = the maxGSSize used for that term's enrichment: endosomal
+# transport / GTPase use 500 (identical universe to go_bp_tlr4, so adjusted_p_value matches
+# that analysis exactly; endocytosis was dropped for exceeding it). Vesicle-mediated transport
+# has 1643 genes, so it needs a larger cap (2000) and is enriched in its own run below -- its
+# FDR is therefore BH-adjusted over a larger term universe than the 500-cap terms.
+terms <- tribble(
+  ~Term,                        ~GO_id,       ~ont,  ~max_gs,
+  "Endosomal transport",        "GO:0016197", "BP",   500L,
+  "GTPase activity",            "GO:0003924", "MF",   500L,
+  "Vesicle-mediated transport", "GO:0016192", "BP",  2000L
+)
+
+# One go_enrich() per (omic, ontology, maxGSSize) group, keeping only that group's target
+# term(s). Background = all annotated genes; cutoffs relaxed + no simplify so non-significant
+# terms are kept (written to CSV so any term can be plotted later).
+enr <- purrr::imap_dfr(omic_changes, function(genes, omic) {
+  purrr::pmap_dfr(distinct(terms, ont, max_gs), function(ont, max_gs) {
+    keep <- terms$GO_id[terms$ont == ont & terms$max_gs == max_gs]
+    go_enrich(genes, ont = ont, background = NULL, simplify_cutoff = NULL,
+              pvalueCutoff = 1, qvalueCutoff = 1, minGSSize = 10, maxGSSize = max_gs) |>
+      filter(GO_id %in% keep)
+  }) |> mutate(omic = omic)
+})
+
+# Complete the omic x term grid; terms with zero overlap get p = 1, n = 0.
+res <- tidyr::expand_grid(GO_id = terms$GO_id, omic = names(omic_changes)) |>
+  left_join(terms, by = "GO_id") |>
+  left_join(select(enr, GO_id, omic, p_value, adjusted_p_value, n_proteins, Genes),
+            by = c("GO_id", "omic")) |>
+  mutate(p_value = coalesce(p_value, 1), adjusted_p_value = coalesce(adjusted_p_value, 1),
+         n_proteins = coalesce(n_proteins, 0L),
+         omic = factor(omic, levels = names(omic_changes)))
+
+# Save alongside the GO-term venn diagrams (reactivity_polars.ipynb) these terms belong to.
+# Full results (all tested terms, non-significant included) + the targeted subset, so any
+# term can be re-plotted from the CSV. Plotting itself is the next chunk.
+venn_go_dir <- "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/go_term_venn_diagram"
+write_csv(enr, file.path(venn_go_dir, "cross_omics_go_enrichment_all_terms.csv"))
+write_csv(res, file.path(venn_go_dir, "cross_omics_go_enrichment.csv"))
+```
+DISC1
+```{r, fig.height=2.4, fig.width=7.5}
+# Disease/phenotype associations for the FERRY-complex reactive-cysteine genes
+# (PPP1R21, TBCK) plus DISC1, pulled from the Open Targets Platform by
+# src/opentargets_utils.py (re-run that script to refresh the CSV). x = overall
+# association score, bubble size = number of supporting evidence datatypes, one
+# facet per gene -- same dot-plot style as the GO panels (go_dotplot).
+pheno_df <- read_csv("../reference_dbs/phenotype_associations.csv", show_col_types = FALSE) |>
+  # Wrap long disease names so the y-axis labels stay legible.
+  mutate(disease = stringr::str_wrap(disease, width = 30))
+
+go_dotplot(
+  pheno_df,
+  term_col     = "disease",
+  fdr_col      = "score",
+  size_col     = "n_evidence",
+  facet        = "gene",
+  facet_scales = "free_y",  # shared x so scores are comparable across genes
+  x_transform  = identity,
+  size_range   = c(1, 3),
+  size_name    = "evidence",
+  xlab         = "Open Targets association score"
+)
+
+ggsave("/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 6/Panels/phenotype_association/phenotype_associations_dotplot.pdf",
+       height = 2.4, width = 7.5)
+```
+
+```{r, fig.height=2.4, fig.width=7.5}
+# Same panel, but restricted to nervous-system / psychiatric therapeutic areas before
+# taking the top diseases per gene (phenotype_associations_neuro.csv, written by the same
+# script with therapeutic_area_ids = NEURO_PSYCH_TA). This keeps DISC1's schizophrenia link
+# on the panel instead of the pleiotropic GWAS hits that top its unfiltered raw-score list.
+pheno_neuro_df <- read_csv("../reference_dbs/phenotype_associations_neuro.csv", show_col_types = FALSE) |>
+  mutate(disease = stringr::str_wrap(disease, width = 30))
+
+go_dotplot(
+  pheno_neuro_df,
+  term_col     = "disease",
+  fdr_col      = "score",
+  size_col     = "n_evidence",
+  facet        = "gene",
+  facet_scales = "free_y",
+  x_transform  = identity,
+  size_range   = c(1, 3),
+  size_name    = "evidence",
+  xlab         = "Open Targets association score"
+)
+
+ggsave("/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 6/Panels/phenotype_association/phenotype_associations_neuro_dotplot.pdf",
+       height = 2.4, width = 7.5)
+```
+
+```{r, fig.height=1.5, fig.width=2}
+res |>
+  filter(Term == "Endosomal transport") |>
+  ggplot(aes(x = -log10(adjusted_p_value), y = omic, size = n_proteins)) + 
+  facet_wrap(~Term) + 
+  geom_point(shape =21, fill = "#B3CDE3", stroke = LINE_WIDTH) + 
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed", size = LINE_WIDTH) + 
+  my_theme() +
+  theme(strip.background = element_blank(), strip.clip = "off") + 
+  labs(x = expression("-log"[10] * "(FDR)"), y = NULL, size = "proteins") + 
+  scale_size_continuous(range = c(1, 3), breaks = c(20, 25,30, 35)) + 
+  scale_x_continuous(expand = expansion(mult = c(0.2,0.2)))
+
+ggsave(
+  "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/go_term_venn_diagram/Endosmal transport_cross_omics_enrichment.pdf", height = 1.5, width = 2
+)
+
+
+res |>
+  arrange(p_value)
+```
+
+```{r, fig.height=1.5, fig.width=2}
+# Same panel for GTPase activity (GO:0003924, MF). Shares the maxGSSize = 500 term
+# universe with endosomal transport, so its FDR is comparable to that panel.
+res |>
+  filter(Term == "GTPase activity") |>
+  ggplot(aes(x = -log10(adjusted_p_value), y = omic, size = n_proteins)) +
+  facet_wrap(~Term) +
+  geom_point(shape =21, fill = "#B3CDE3", stroke = LINE_WIDTH) +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed", size = LINE_WIDTH) +
+  my_theme() +
+  theme(strip.background = element_blank(), strip.clip = "off") +
+  labs(x = expression("-log"[10] * "(FDR)"), y = NULL, size = "proteins") +
+  scale_size_continuous(range = c(1, 3), breaks = c(20, 25,30, 35)) +
+  scale_x_continuous(expand = expansion(mult = c(0.2,0.2)))
+
+ggsave(
+  "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/go_term_venn_diagram/GTPase activity_cross_omics_enrichment.pdf", height = 1.5, width = 2
+)
+```
+
+```{r, fig.height=1.5, fig.width=2}
+# Same panel for vesicle-mediated transport (GO:0016192). NB its FDR is BH-adjusted over the
+# maxGSSize = 2000 term universe (the set has 1643 genes), unlike the 500-cap terms above.
+res |>
+  filter(Term == "Vesicle-mediated transport") |>
+  ggplot(aes(x = -log10(adjusted_p_value), y = omic, size = n_proteins)) +
+  facet_wrap(~Term) +
+  geom_point(shape =21, fill = "#B3CDE3", stroke = LINE_WIDTH) +
+  geom_vline(xintercept = -log10(0.01), linetype = "dashed", size = LINE_WIDTH) +
+  my_theme() +
+  theme(strip.background = element_blank(), strip.clip = "off") +
+  labs(x = expression("-log"[10] * "(FDR)"), y = NULL, size = "proteins") +
+  scale_size_continuous(range = c(1, 3)) +
+  scale_x_continuous(expand = expansion(mult = c(0.2,0.2)))
+
+ggsave(
+  "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/6-figure format_EV/Figure 3_Reactivity_part2_endocytosis/Panels/go_term_venn_diagram/Vesicle-mediated transport_cross_omics_enrichment.pdf", height = 1.5, width = 2
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# venn diagram enrichment
+
+```{r}
+dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/02_Figures/Figure 3_reactivity profiling broad/Panels/venn_diagram/'
+
+venn_data <- paste0(dir, "venn_data.csv") %>%
+  read_csv(show_col_types = FALSE) %>%
+  mutate(synonyms = protein)
+
+hpa_data <- NULL
+tissues_to_download <- c("Macrophages" = "macrophages", "T-cells" = "T-cells")
+for (tissue in names(tissues_to_download)) {
+  for (category in c("Cell+type+enhanced", "Cell+type+enriched", "Group+enriched")) {
+    url <- paste0(
+      "https://www.proteinatlas.org/search/cell_type_category_rna%3A",
+      tissue,
+      "%3B",
+      category,
+      "+AND+sort_by%3Atissue+specific+score?format=tsv"
+    )
+    hpa_data <- GET(url) %>%
+      content(as = "text") %>%
+      read_delim(show_col_types = FALSE) %>%
+      mutate(
+        tissue = tissues_to_download[tissue],
+        hpa_category = gsub("\\+", " ", category)
+      ) %>%
+      rbind(hpa_data)
+
+    Sys.sleep(0.1)
+  }
+}
+
+df <- hpa_data %>%
+  mutate(synonyms = paste0(Gene, ", ", `Gene synonym`)) %>%
+  separate_rows(synonyms, sep = ", ") %>%
+  filter(synonyms != "NA") %>%
+  mutate(key = paste(synonyms, tissue)) %>%
+  dplyr::select(synonyms, tissue, key, hpa_category, `RNA single cell type specificity`, `RNA single cell type specific nCPM`) %>%
+  filter(synonyms %in% unique(venn_data$protein)) %>%
+    group_by(synonyms) %>%
+  summarise(
+    tissue = case_when(
+      all(c("T-cells", "macrophages") %in% tissue) ~ "enriched in both",
+      "T-cells" %in% tissue ~ "enriched in T-cells",
+      "macrophages" %in% tissue ~ "enriched macrophages"
+    ), `RNA single cell type specificity`, `RNA single cell type specific nCPM`) %>%
+  right_join(y = venn_data, by = "synonyms") %>%
+  mutate(tissue = case_when(is.na(tissue) ~ "enriched in neither", TRUE ~ tissue))
+unique(df$tissue)
+
+
+df %>% write_csv(paste0(dir, "venn_data_annotated.csv"))
+```
+
+```{r, fig.width=3, fig.height=2}
+library(ComplexUpset)
+library(ggbreak)
+TEXT_ELEMENT = element_text(size = FONT_SIZE,
+                            color = "black",
+                            family = FONT_FAMILY)
+
+upset_plot_theme <-
+  theme_classic() +
+  theme(
+    axis.text.y = TEXT_ELEMENT,
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.ticks = element_blank(),
+    axis.title.y = TEXT_ELEMENT,
+    panel.grid = element_blank(),
+    axis.line.x = AXIS_LINE,
+    axis.line.y = AXIS_LINE
+  )
+df %>%
+  filter((`Macrophage` == 1) |
+           (`Cell 2020` == 1)) %>%
+  mutate(tissue = factor(tissue, levels = rev(c("enriched in both", "enriched in T-cells","enriched macrophages","enriched in neither")))) %>%
+  upset(
+    intersect = c("Macrophage", "Cell 2020"),
+    matrix = (
+      intersection_matrix(
+        geom = geom_point(size = 1),
+        segment = geom_segment(linewidth = LINE_WIDTH)
+      )
+    ),
+    base_annotations =
+      list(
+        'Intersection size' =
+          intersection_size(
+            mapping = aes(fill = tissue),
+            text = list(
+              size = FONT_SIZE_MM,
+              color = "black",
+              family = FONT_FAMILY,
+              vjust = -0.1,
+              check_overlap = TRUE
+            ),
+            color = "black",
+            size = LINE_WIDTH,
+            width = 0.7
+          ) + scale_fill_manual(values = rev(c(cols[["TLR1-2"]], cols[["TLR3"]], cols[["TLR7"]], cols[["M0"]]))) + theme(legend.text = TEXT_ELEMENT, legend.title = element_blank(), legend.key.size = unit(3, "mm")) + scale_y_break(c(30, 100), scales = 0.5)
+      ),
+    set_sizes = FALSE,
+    stripes = "white",
+    themes = list(
+      intersections_matrix = upset_plot_theme + theme(
+        axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.title.y = element_blank()
+      ),
+      `Intersection size` = upset_plot_theme + theme(
+        axis.text.x = element_blank(),
+        axis.title.y = TEXT_ELEMENT,
+        axis.text.y = TEXT_ELEMENT,
+        axis.line.y = AXIS_LINE,
+        axis.ticks.x = element_blank()
+      )
+    )
+  ) 
+
+ggsave(paste0(dir, "enriched in cells upset_plot.svg"), width = 3, height =2 )
+```
+
+
+
+
+
+
+# Comparison with T cell data
+
+```{r}
+expression_and_reactivity_boxplot_all_conditions <-
+  function(condition_to_display,
+           control_condition,
+           proteins_to_plot,
+           whole_proteome_table,
+           reactivity_table,
+           ht,
+           wd) {
+    cysteine_seperator <- ", " # for aggregated cysteines
+    
+    si_matrix <- whole_proteome_table %>%
+      # select columns needed for plot
+      select(starts_with(c(
+        conditions, c("protein", control_condition)
+      ))) %>%
+      filter(protein %in% proteins_to_plot) %>%
+      column_to_rownames("protein")
+    
+    # calculate fold change to median of control condition
+    wp_df <- (si_matrix / apply(si_matrix[, grepl(control_condition, colnames(si_matrix))], 1, median, na.rm =TRUE)) %>%
+      rownames_to_column("protein") %>%
+      # pivot to long format for plotting
+      pivot_longer(cols = -protein,
+                   names_to = "condition_replicate",
+                   values_to = "channel_ratio") %>%
+      # drop replicates where the protein was not quantified
+      drop_na() %>%
+      separate_wider_delim(
+        cols =condition_replicate,
+        delim = "_",
+        names = c("condition", "technical_replicate", "experiment"),
+        too_many = "drop"
+      ) %>% mutate(
+        residue = "C0",
+        regulation = "Protein expression",
+        reactivity_change = FALSE
+      ) 
+    
+    si_matrix <- reactivity_table %>%
+      filter(protein %in% proteins_to_plot) %>%
+      # select columns needed for plot
+      select(starts_with(c(
+        conditions, c("protein", "residue", control_condition)
+      ))) %>% mutate(residue = gsub(';', cysteine_seperator ,residue)) %>%
+      # concat protein and residue
+      unite(rowname, protein, residue) %>%
+      column_to_rownames()
+    # calculate fold change to median of control condition
+    df <- (si_matrix / apply(si_matrix[, grepl(control_condition, colnames(si_matrix))], 1, median, na.rm =TRUE)) %>%
+      rownames_to_column("protein_residue") %>%
+      # pivot to long format for plotting
+      pivot_longer(cols = -protein_residue,
+                   names_to = "condition_replicate",
+                   values_to = "channel_ratio") %>%
+      # drop missing values
+      drop_na() %>%
+      separate_wider_delim(
+        cols = c("protein_residue"),
+        delim = "_",
+        names = c("protein", "residue")
+      ) %>%
+      separate_wider_delim(
+        cols = c("condition_replicate"),
+        delim = "_",
+        names = c("condition", "experiment", "technical_replicate"),
+        too_many = "drop"
+      ) %>% merge(
+      y = full_df %>%
+        select(protein, residue, reactivity_change, condition) %>%
+        mutate(residue =gsub(",", cysteine_seperator, residue)),
+      by = c("protein", "residue", "condition"),
+      all.x = TRUE
+    ) %>% mutate(regulation = "Reactivity") %>%
+      rbind(wp_df) %>%
+      mutate(
+        # converting strings to factors so proteins and conditions have correct order
+        protein = factor(protein, levels = proteins_to_plot),
+        condition = factor(condition, levels = c(control_condition, conditions)),
+        # get numeric index of cysteine for sorting
+        residue_loc = str_split_fixed(residue, "C", 2)[, 2],
+        residue_loc = str_split_fixed(residue_loc, cysteine_seperator, 2)[, 1] %>% as.numeric(),
+        # format reactivity change boolean to string
+        reactivity_change = as.character(reactivity_change), 
+        reactivity_change = replace_na(reactivity_change, "FALSE")
+      ) %>%
+      filter(condition != "TLR9")
+    
+    # set plot dimensions
+    # adding extra buffer on the bottom for annotation
+    max_plot_value <- max(log2(df$channel_ratio)) * 1.1
+    min_plot_value <- min(log2(df$channel_ratio)) * 1.2
+    margin_value <- min_plot_value  + 0.05 * (max_plot_value - min_plot_value)
+    
+    plot <- df %>%
+      unique() %>%
+      ggplot(aes(
+        x = reorder(residue, residue_loc),
+        fill = condition,
+        y = log2(channel_ratio),
+        shape = regulation
+      )) +
+      geom_boxplot(
+        outliers = FALSE,
+        width = 0.7,
+        lwd = LINE_WIDTH,
+        show.legend = FALSE,
+        alpha = 0.6,
+        position = position_dodge(width = 0.8)
+      ) +
+      # replicate level LFC values
+      geom_beeswarm(
+        col = "black",
+        stroke = POINT_STROKE,
+        show.legend = FALSE,
+        size = 0.9,
+        alpha = 0.7,
+        dodge.width = 0.8
+      ) +
+      facet_rep_grid(~ protein, scales = "free_x", space = "free", ) +
+      my_theme() +
+      theme(
+        plot.title = element_text(
+          size = 6,
+          color = "black",
+          family = "Helvetica",
+          hjust = 0.5
+        ),
+        strip.background = element_blank(),
+        panel.spacing = unit(2, "mm"),
+        strip.text = element_text(
+          size = 8,
+          family = "Helvetica",
+          color = "black"
+        ),
+        strip.clip = "off",
+        panel.grid.major.y = element_line(linewidth = LINE_WIDTH, linetype = "solid", color = "grey90")
+      ) +
+      # boxes indicating reactivity changes
+      geom_point(
+        #data = rc_changes,
+        mapping = aes(
+          y = (min_plot_value + margin_value) / 2,
+          color = condition,
+          alpha = reactivity_change
+        ),
+        size = 1.5,
+        show.legend = FALSE,
+        shape = 22,
+        position = position_dodge(width = 0.8),
+        stroke = POINT_STROKE *1.5
+      ) +
+      # lines separating residues
+      geom_vline(
+        xintercept = 1.5:length(unique(df$residue)),
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "grey90"
+      ) + 
+      # margin line
+      geom_hline(
+        yintercept = margin_value,
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "black"
+        )  +
+      labs(y = substitute(paste('log'[2],"(FC from ", m, ")"),list(m = control_condition)),
+           x = "",
+           fill = "Reactivity") +
+      scale_fill_manual(values = cols) +
+      scale_alpha_discrete(range = c(0,1)) +
+      scale_color_manual(values = cols) +
+      scale_shape_manual(values = c("Reactivity" = 21,"Protein expression" = 24)) +
+      scale_y_continuous(limits = c(min_plot_value, max_plot_value), expand = expansion(mult = c(0, 0)))
+    
+    print(plot)
+    
+    save_plot(
+      paste0(results_dir, "/05_boxplots/", paste(proteins_to_plot, collapse = "_")),
+      width = wd,
+      height = ht
+    )
+    
+    return(df)
+  }
+```
+
+
+```{r}
+# --- Helper functions ---
+
+# Selects columns, filters proteins, computes fold change vs. control median,
+# then pivots to long format and drops NAs
+compute_fold_change <- function(mat, control_condition) {
+  control_cols <- grepl(control_condition, colnames(mat))
+  mat / apply(mat[, control_cols], 1, median, na.rm = TRUE)
+}
+
+prepare_matrix <- function(tbl, id_cols, conditions, control_condition, proteins_to_plot) {
+  tbl %>%
+    filter(protein %in% proteins_to_plot) %>%
+    select(starts_with(c(conditions, id_cols, control_condition))) %>%
+    unite(rowname, all_of(setdiff(id_cols, "protein")), remove = FALSE) %>%
+    column_to_rownames("rowname")
+}
+
+pivot_to_long <- function(mat, value_col, control_condition) {
+  compute_fold_change(mat, control_condition) %>%
+    rownames_to_column("rowname") %>%
+    pivot_longer(-rowname, names_to = "condition_replicate", values_to = value_col) %>%
+    drop_na()
+}
+
+prep_combined_data <- function(whole_proteome_table, reactivity_table, proteins_to_plot, control_condition, conditions){
+  cysteine_seperator <- ","
+  # --- Whole-proteome (protein expression) data ---
+  print("wp")
+  wp_df <- whole_proteome_table %>%
+    read_csv(show_col_types = FALSE) |> 
+    filter(protein %in% proteins_to_plot) %>%
+    select(starts_with(c(conditions, "protein", control_condition))) %>%
+    column_to_rownames("protein") %>%
+    pivot_to_long("channel_ratio", control_condition) %>%
+    rename(protein = rowname) %>%
+    separate_wider_delim(
+      condition_replicate, "_",
+      names = c("condition", "technical_replicate", "experiment"),
+      too_many = "drop"
+    ) %>%
+    mutate(residue = "C0", regulation = "Protein expression", reactivity_change = FALSE)
+  
+  # --- Reactivity data ---
+  print("rc")
+  reactivity_df <- reactivity_table %>%
+    read_csv(show_col_types = FALSE) |> 
+    filter(protein %in% proteins_to_plot) %>%
+    select(starts_with(c(conditions, "protein", "residue", control_condition))) %>%
+    mutate(residue = gsub(";", cysteine_seperator, residue)) %>%
+    unite(rowname, protein, residue) %>%
+    column_to_rownames() %>%
+    pivot_to_long("channel_ratio", control_condition) %>%
+    separate_wider_delim(rowname, "_", names = c("protein", "residue")) %>%
+    separate_wider_delim(
+      condition_replicate, "_",
+      names = c("condition", "experiment", "technical_replicate"),
+      too_many = "drop"
+    ) %>%
+    left_join(
+      full_df %>%
+        select(protein, residue, reactivity_change, condition) %>%
+        mutate(residue = gsub(", ", cysteine_seperator, residue)),
+      by = c("protein", "residue", "condition")
+    ) %>%
+    mutate(regulation = "Reactivity")
+  
+  # --- Combine and finalise ---
+  
+  df <- bind_rows(reactivity_df, wp_df) %>%
+    filter(condition != "TLR9") %>%
+    mutate(
+      protein          = factor(protein, levels = proteins_to_plot),
+      condition        = factor(condition, levels = c(control_condition, conditions)),
+      residue_loc      = str_split_fixed(residue, "C", 2)[, 2] %>%
+                           str_split_fixed(cysteine_seperator, 2) %>% `[`(, 1) %>% as.numeric(),
+      reactivity_change = replace_na(as.character(reactivity_change), "FALSE")
+    )
+  return(df)
+}
+
+# macrophage
+macrophage_dir <- "/Users/henrysanford/dev/test_data/macrophage/"
+macrophage_wp_table <- file.path(macrophage_dir, '01_whole_proteome/03_results/3_reps/03_combined_files/1/07_combfiles_percctrl_wp_min_2_replicates.csv')
+macrophage_rc_table <- file.path(macrophage_dir, '02_reactivity/03_rc_analysis/20250225_3reps/04_combined_files/2/07_combfiles_cysaggr_percctrl_rc_min_2_replicates.csv')
+
+# t cell
+t_cell_dir <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Exhaustion manuscript/02_Mass-spectrometry data/'
+t_cell_wp_table <- file.path(t_cell_dir, "01_whole_proteome/02_wp_analysis/20240821_6rep_2MC_two_replicate_var_filter/03_combined_files/20240821_6rep_2MC_two_replicate_var_filter/07_combfiles_percctrl_passes_two_replicate_variability_filter.csv")
+t_cell_rc_table <- file.path(t_cell_dir, "02_reactivity/03_rc_analysis/20240821_5_rep_variability_filter/04_combined_files/20240821_5_rep_variability_filter/07_combfiles_cysaggr_percctrl_passes_two_replicate_variability_filter.csv")
+
+protein_to_plot <- "GSR"
+
+macrophage_df <- prep_combined_data(
+  macrophage_wp_table,
+  macrophage_rc_table,
+  proteins_to_plot = protein_to_plot,
+  control_condition = "M0",
+  conditions = c("TLR4")
+) |> mutate(dataset = "Macrophage")
+
+t_cell_df <- prep_combined_data(
+  t_cell_wp_table,
+  t_cell_rc_table,
+  proteins_to_plot = protein_to_plot,
+  control_condition = "D2",
+  conditions = c("D8C")
+) |> mutate(dataset = "T cell")
+
+
+```
+
+
+
+```{r, fig.width=1.5, fig.height=2.3}
+df <- macrophage_df |> 
+  rbind(t_cell_df)
+
+combined_color_palette <- c(cols, c("D2" = "#A1A1A1", "D4A" = "#ABA2D6", "D8A" = "#603EA6", "D4C" = "#FBB31B", "D8C" = "#E27753"))
+
+# set plot dimensions
+  # adding extra buffer on the bottom for annotation
+  max_plot_value <- max(log2(df$channel_ratio)) * 1.1
+  min_plot_value <- min(log2(df$channel_ratio)) * 1.1
+  #margin_value <- min_plot_value  + 0.05 * (max_plot_value - min_plot_value)
+
+df %>%
+  mutate(residue = gsub("C0", "Expression", residue)) |> 
+      unique() %>%
+      ggplot(aes(
+        x = reorder(residue, residue_loc),
+        fill = condition,
+        y = log2(channel_ratio),
+        shape = regulation
+      )) +
+      geom_boxplot(
+        outliers = FALSE,
+        width = 0.7,
+        lwd = LINE_WIDTH,
+        show.legend = FALSE,
+        alpha = 0.6,
+        position = position_dodge(width = 0.8)
+      ) +
+      # replicate level LFC values
+      geom_beeswarm(
+        col = "black",
+        stroke = POINT_STROKE,
+        show.legend = FALSE,
+        size = 0.9,
+        alpha = 0.7,
+        dodge.width = 0.8
+      ) +
+      facet_rep_grid(~ protein, scales = "free_x", space = "free", ) +
+      my_theme() +
+      theme(
+        plot.title = element_text(
+          size = 6,
+          color = "black",
+          family = "Helvetica",
+          hjust = 0.5
+        ),
+        strip.background = element_blank(),
+        panel.spacing = unit(2, "mm"),
+        strip.text = element_text(
+          size = 8,
+          family = "Helvetica",
+          color = "black"
+        ),
+        strip.clip = "off",
+        panel.grid.major.y = element_line(linewidth = LINE_WIDTH, linetype = "solid", color = "grey90")
+      ) +
+      # lines separating residues
+      geom_vline(
+        xintercept = 1.5:length(unique(df$residue)),
+        size = LINE_WIDTH,
+        linetype = "solid",
+        color = "grey90"
+      ) + 
+      labs(y = substitute(paste('log'[2],"(FC from ", m, ")"),list(m = "control")),
+           x = "",
+           fill = "Reactivity") +
+  scale_fill_manual(values = combined_color_palette) +
+      scale_alpha_discrete(range = c(0,1)) +
+      scale_shape_manual(values = c("Reactivity" = 21,"Protein expression" = 24)) +
+      scale_y_continuous(limits = c(min_plot_value, max_plot_value), expand = expansion(mult = c(0, 0))) + 
+  facet_grid(cols = vars(dataset), space = "free", scales = "free_x") + 
+        theme(axis.text.x = element_text(
+          color = "black",
+          angle = 45,
+          size = FONT_SIZE,
+          family = "Arial",
+          vjust = 1,
+          hjust = 1
+        ))
+save_plot(
+      paste0(results_dir, "/05_boxplots/", "t_cell_mac_gsr"),
+      width = 1.5,
+      height = 2.3
+    )
+
+results_dir
+results_dir
+```
+
+
+
+
+

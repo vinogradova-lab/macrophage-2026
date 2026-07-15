@@ -1,0 +1,875 @@
+```{r}
+
+# load figure settings
+source("figure_utils.R")
+
+analysis_dir <- "/Users/henrysanford/dev/test_data/macrophage/metabolomics/cross_replicate_analysis"
+results_dir <-paste0(analysis_dir, "/04_results/")
+'/Users/henrysanford/dev/test_data/macrophage/metabolomics/20240924_list of polar metabolites for the targeted assay_annotations_LSP_v3.csv' %>% read_csv(show_col_types = FALSE) -> annotations_df
+```
+
+
+# Whole cell metabolomics
+
+### PCA
+
+```{r, fig.height=4, fig.width=2}
+replot_pca(
+  pca_dir = paste0(results_dir, "/pca/"),
+  x = "PC1",
+  y = "PC2",
+  arrow_scaling = 50
+)
+```
+
+
+
+### Z-score heatmap
+
+```{r}
+
+```
+
+
+
+
+```{r}
+top_n <- paste0(analysis_dir, "/04_results/volcano_plots/volcano_data.csv") |>
+    read_csv(show_col_types = FALSE)
+
+full_df$Compound %in% top_n$Compound
+```
+
+
+```{r, fig.height=2, fig.width=4}
+
+get_top_n_by_pval <- function(n_metabolites){
+  top_n <- paste0(analysis_dir, "/04_results/volcano_plots/volcano_data.csv") |>
+    read_csv(show_col_types = FALSE) |>
+    mutate(
+      direction = case_when(
+        `log2_FC_metabolomics - M0 vs. LPS (179 Metabolites)` < 0 ~ "Down",
+        TRUE ~ "Up"
+      ),
+      pval = `p_value_metabolomics - M0 vs. LPS (179 Metabolites)`
+    ) |> 
+    select(Compound, direction, pval) |> 
+    group_by(direction) |> 
+    arrange(pval, .by_group = TRUE) |> 
+    slice_head(n = n_metabolites / 2) |> 
+    pull(Compound) 
+    return(top_n)
+}
+
+filter_to_sig_nucleotides <- function(){
+  
+  nucleotides <- annotations_df |> 
+    # clean up pathway annotations
+    mutate(`Super Pathway (MSK metabolomics Core dMRM method` = 
+               case_when(`Super Pathway (MSK metabolomics Core dMRM method` == "Nucleotide?" ~ "Nucleotide",
+                         TRUE ~ `Super Pathway (MSK metabolomics Core dMRM method`)) |> 
+  filter(`Super Pathway (MSK metabolomics Core dMRM method` == "Nucleotide") |> 
+  pull(Alias)
+  
+  top_n <- paste0(analysis_dir, "/04_results/volcano_plots/volcano_data.csv") |>
+    read_csv(show_col_types = FALSE) |>
+    filter(
+      abs(`log2_FC_metabolomics - M0 vs. LPS (179 Metabolites)`) > log2(1.5),
+      `p_value_metabolomics - M0 vs. LPS (179 Metabolites)` < 0.05,
+      Compound %in% nucleotides
+    )  |> pull(Compound)
+  return(top_n)
+  
+  
+}
+
+seed = 12345
+
+paste0(analysis_dir, "/03_combined_files/combreplicates_channel_ratio.csv") %>% 
+  read.csv() %>% 
+  drop_na() -> full_df
+
+  ha = HeatmapAnnotation(
+    condition = anno_block(
+      gp = gpar(fill = c("#AAAAAA", "#FFCC31"),
+                col = "white"),
+      labels = c("M0", "LPS"),
+      labels_gp = gpar(col = "white", 
+                       fontsize = 7.5, fontfamily = FONT_FAMILY)
+    )
+  )
+  
+  
+  names(full_df)[names(full_df) == 'Compound'] <- 'compound'
+  
+  full_df <- merge(full_df, annotations_df, by.x = "compound", by.y = "NAME", all.x= TRUE)
+  full_df <- full_df |>   mutate(Alias = coalesce(Alias, compound))
+  #top_n_pval <- get_top_n_by_pval(50)
+  top_n_pval <- filter_to_sig_nucleotides()
+  full_df  |> filter(compound %in% top_n_pval) |> column_to_rownames("Alias") %>% select(contains("_d")) -> channel_ratio_df
+  
+  # filter to top 100 based on variance
+  #variances <- apply(channel_ratio_df, 1, var)
+  #top_100_variable <- names(sort(variances, decreasing = TRUE)[1:75])
+  
+  channel_ratio_df <- channel_ratio_df %>% arrange(rownames(channel_ratio_df))
+  
+  channel_ratio_df %>% rownames_to_column("compound") %>% arrange(compound) -> full_df
+  
+    merge(full_df, annotations_df, by.x = "compound", by.y = "Alias", all.x= TRUE) %>%
+      arrange(compound) %>%
+    # clean up pathway annotations
+    mutate(`Super Pathway (MSK metabolomics Core dMRM method` = 
+               case_when(`Super Pathway (MSK metabolomics Core dMRM method` == "Nucleotide?" ~ "Nucleotide",
+                         `Super Pathway (MSK metabolomics Core dMRM method` == "Lipid?" ~ "Lipid",
+                         `Super Pathway (MSK metabolomics Core dMRM method` == "Lipids" ~ "Lipid",
+                         `Super Pathway (MSK metabolomics Core dMRM method` == "Amino Acid?" ~ "Amino Acid",
+                         `Super Pathway (MSK metabolomics Core dMRM method` == "" ~ "Other",
+                         `Super Pathway (MSK metabolomics Core dMRM method` == NA ~ "Other",
+                         TRUE ~ `Super Pathway (MSK metabolomics Core dMRM method`)) %>%
+    pull(`Super Pathway (MSK metabolomics Core dMRM method`) %>% replace_na(replace = "Other") -> metabolite_class
+  
+  col_fun = colorRamp2(c(-2.5, 0, 2.5), c("blue", "white", "red"))
+  
+  col_pal <- list(class = c("Lipid" = "#fde725",
+     "Amino Acid" = "#a0da39",
+     "Cofactors and Vitamins" = "#4ac16d",
+     "Uridine" = "#1fa187",
+     "Nucleotide" = "#277f8e",
+     "Energy" = "#365c8d",
+     "Carbohydrate" = "#46327e",
+     "Xenobiotic" = "#440154",
+     "Other" = "lightgrey"
+     ))
+  
+  # metabolite class annotation
+  ra <- HeatmapAnnotation(class=metabolite_class, 
+                          which = "row", 
+                          col = col_pal, 
+                          show_annotation_name = FALSE,
+                          annotation_legend_param = list(
+                            class = list(
+                              title = "metabolite class",
+                              title_gp =gpar(fontsize =8, fontfamily = FONT_FAMILY ), 
+                              labels_gp = gpar(fontsize =FONT_SIZE, fontfamily = FONT_FAMILY),
+                              at = names(col_pal$class)
+                            )
+                          ),
+                          simple_anno_size = unit(3, "mm")
+                          
+  )
+  
+  
+  
+  channel_ratio_df %>% 
+    as.matrix() %>% 
+    # z-score calculation
+    apply(1,scale) %>% 
+    as.data.frame()  %>%
+    # sort samples by condition
+    mutate(sample_name = colnames(channel_ratio_df)) %>%
+    mutate(condition = lapply(sample_name, str_split_i, pattern="_",i=1) %>% unlist()) %>% 
+    mutate(condition = factor(condition, levels = names(cols))) %>%
+    arrange(condition) -> t_df
+  channel_conditions <- t_df$condition
+  
+  t_df %>%  
+    select(-c(condition)) %>%
+    column_to_rownames("sample_name") %>%
+    t() -> ht_mat
+  
+    set.seed(seed)
+  Heatmap(ht_mat,
+      bottom_annotation = ha,
+      right_annotation = ra,
+      show_column_dend = FALSE,
+      column_split = channel_conditions,
+      column_title = NULL,
+      show_row_dend = FALSE,
+      show_column_names = FALSE,
+      row_km = 2,
+      cluster_columns = FALSE,
+      #rect_gp = gpar(col = "white", lwd = LINE_WIDTH),
+      row_gap = unit(0.5, "mm"),
+      column_gap = unit(0.5, "mm"),
+      cluster_rows = TRUE,
+      row_names_side = "right",
+      show_row_names = TRUE,
+      row_names_gp = gpar(fontsize = 5, fontfamily = FONT_FAMILY),
+      row_title_gp = gpar(fontsize = 6, fontfamily = FONT_FAMILY),
+      column_names_gp = gpar(fontsize = 5, fontfamily = FONT_FAMILY),
+      name = "z-score",
+      heatmap_legend_param = list(
+        title = "z-score",
+        title_gp =gpar(fontsize = 6, fontfamily = FONT_FAMILY), 
+        labels_gp = gpar(fontsize =FONT_SIZE, fontfamily = FONT_FAMILY)
+        ),
+      col=col_fun) -> ht
+  
+  pdf( file = paste0(results_dir, "heatmap/heatmap_z_score_hierarchical_clustering_conditions_split.pdf"), 
+  width = 4,
+  height = 6)
+  set.seed(seed)
+print(ht)
+dev.off()
+set.seed(seed)
+print(ht)
+
+
+ht_mat %>% 
+  as_data_frame() %>% 
+  rownames_to_column("compound_alias") %>% 
+  write_csv(
+    paste0(results_dir, "heatmap/z_score_data.csv")
+    )
+
+channel_ratio_df
+
+  pdf( file = paste0(results_dir, "heatmap/heatmap_z_score_nucleotides.pdf"), 
+  width = 4,
+  height = 2)
+  set.seed(seed)
+print(ht)
+dev.off()
+set.seed(seed)
+print(ht)
+results_dir
+```
+```{r}
+
+
+full_df
+```
+
+
+### Horizontal version
+```{r, fig.width=6.7, fig.height=2.3}
+  ha = HeatmapAnnotation(
+    condition = anno_block(
+      gp = gpar(fill = c("#AAAAAA", "#FFCC31"),
+                col = "white"),
+      labels = c("M0", "LPS"),
+      labels_gp = gpar(col = "white", 
+                       fontsize = 7.5, fontfamily = FONT_FAMILY)
+    ),
+    which = "row"
+  )
+
+# metabolite class annotation - now column annotation
+
+
+ca <- HeatmapAnnotation(
+  class = metabolite_class,
+  which = "column",
+  col = col_pal,
+  show_annotation_name = FALSE,
+  annotation_legend_param = list(
+    class = list(
+      title = "metabolite class",
+      title_gp = gpar(fontsize = 8, fontfamily = FONT_FAMILY),
+      labels_gp = gpar(fontsize = FONT_SIZE, fontfamily = FONT_FAMILY),
+      at = names(col_pal$class)
+    )
+  ),
+  simple_anno_size = unit(3, "mm")
+)
+
+channel_ratio_df %>%
+  as.matrix() %>%
+  apply(1, scale) %>%
+  as.data.frame() %>%
+  mutate(sample_name = colnames(channel_ratio_df)) %>%
+  mutate(condition = lapply(sample_name, str_split_i, pattern = "_", i = 1) %>% unlist()) %>%
+  mutate(condition = factor(condition, levels = names(cols))) %>%
+  arrange(condition) -> t_df
+channel_conditions <- t_df$condition
+
+t_df %>%
+  select(-c(condition)) %>%
+  column_to_rownames("sample_name") %>%
+  t() -> ht_mat
+
+# transpose so metabolites are now columns, samples are rows
+ht_mat_h <- t(ht_mat)
+
+set.seed(seed)
+Heatmap(ht_mat_h,
+    left_annotation = ha,
+    bottom_annotation  = ca,
+    show_row_dend = FALSE,
+    row_split = channel_conditions,
+    row_title = NULL,
+    show_column_dend = FALSE,
+    show_row_names = FALSE,
+    column_km = 2,
+    cluster_rows = FALSE,
+    column_gap = unit(0.5, "mm"),
+    row_gap = unit(0.5, "mm"),
+    cluster_columns = TRUE,
+    column_names_side = "bottom",
+    show_column_names = TRUE,
+    column_names_rot = 45,
+    column_names_gp = gpar(fontsize = 5, fontfamily = FONT_FAMILY),
+    column_title_gp = gpar(fontsize = 6, fontfamily = FONT_FAMILY),
+    row_names_gp = gpar(fontsize = 5, fontfamily = FONT_FAMILY),
+    name = "z-score",
+    heatmap_legend_param = list(
+      title = "z-score",
+      title_gp = gpar(fontsize = 6, fontfamily = FONT_FAMILY),
+      labels_gp = gpar(fontsize = FONT_SIZE, fontfamily = FONT_FAMILY)
+    ),
+    col = col_fun) -> ht
+
+pdf(file = paste0(results_dir, "heatmap/heatmap_z_score_hierarchical_clustering_conditions_split.pdf"),
+  width = 6.7,
+  height = 2)
+set.seed(seed)
+print(ht)
+dev.off()
+set.seed(seed)
+print(ht)
+```
+
+
+
+### Fold change heatmap
+
+```{r, fig.width = 1.8, fig.height=2}
+
+c("Adenine",
+"Adenosine",
+"AMP",
+"ADP",
+"ATP",
+"AICAR",
+"Guanine",
+"Guanosine",
+"GMP",
+"GDP",
+"GTP",
+"Hypoxanthine",
+"Inosine",
+"IMP") -> nucs_highlight
+
+conditions <- c("M0", "TLR4")
+
+ba <- HeatmapAnnotation(
+  foo = anno_block(
+    gp = gpar(fill = cols[conditions], 
+              col = "transparent"), 
+    labels =  conditions,
+    height = unit(3,"mm"),
+    labels_gp = gpar(col = "white", fontsize =6)))
+
+pdf(file=paste0(results_dir, "heatmap/fold_change_whole_cell_nucleotides.pdf"),width=2.1,height=2)
+paste0(results_dir, "volcano_plots/volcano_data.csv") %>% 
+  read_csv(show_col_types = FALSE) %>%
+  rename(compound = "Compound") %>%
+  filter(compound %in% nucs_highlight) %>% 
+  mutate(compound = factor(compound, levels = nucs_highlight)) %>% 
+  arrange(compound)  %>%
+  column_to_rownames("compound") %>%
+  select(starts_with("log2_FC_") & matches(paste(conditions, collapse = "|"))) %>%
+  as.matrix() %>%
+  Heatmap(
+          top_annotation = ba,
+          show_column_dend = FALSE,
+          column_split = conditions,
+          show_row_dend = FALSE,
+          show_column_names = FALSE,
+          cluster_columns = FALSE,
+          cluster_rows = FALSE,
+          row_names_side = "left",
+          row_names_gp = gpar(fontsize =6 ),
+          row_title_gp = gpar(fontsize =6 ),
+          row_title_side = "right",
+          name = "log2(FC from D2)",
+          rect_gp = gpar(col = "white", lwd = LINE_WIDTH),
+          column_title = NULL,
+          heatmap_legend_param = list(legend_height = unit(1, "cm"), grid_width = unit(0.2, "cm"), title_gp =gpar(fontsize =6 ), labels_gp = gpar(fontsize =6 ) ),
+          column_gap = unit(0.5/2, "mm"),
+          col=colorRamp2(c(-3, 0, 3), c("blue", "white", "red"))) -> ht
+print(ht)
+dev.off()
+print(ht)
+
+paste0(results_dir, "volcano_plots/volcano_data.csv") %>% 
+  read_csv(show_col_types = FALSE) 
+```
+
+### Volcano plots
+
+
+```{r}
+metabolite_volcano_plot <- function(volcano_data,
+                                    condition = "TLR4",
+                                    y_lim = 20,
+                                    x_lim = 6.5,
+                                    file_name = "metabolomics",
+                                    target_name = "Metabolites",
+                                    add_labels = TRUE) {
+  nudge_x <- 0
+  nudge_y <- 3
+  label_bound = 0
+  y_limit <- y_lim
+  x_limit <- x_lim
+  label_upper_bound = x_limit + 3
+  box_padding <- 0.1
+  control_condition <- "M0"
+  
+  suffix <- paste0(
+    "_",
+    file_name,
+    "...",
+    control_condition,
+    ".vs..",
+    condition,
+    "..",
+    as.character(nrow(volcano_data)),
+    ".",
+    target_name,
+    "."
+  )
+  
+  x_var <-
+    paste0("log2_FC", suffix)
+  y_var <-
+    paste0("X.log10_pval", suffix)
+  change_var = paste0("Regulation", suffix)
+  name_var = paste0("compound")
+  print(x_var)
+  print(y_var)
+  
+  title <- paste0(control_condition, " vs ", condition)
+  print(max(abs(volcano_data[[x_var]])))
+  print(max(abs(volcano_data[[y_var]])))
+  
+  alphas_binary <- c(0.2, 0.9)
+  
+  sig <-
+    volcano_data[volcano_data[[change_var]] %in% c("Significant Up", "Significant Down"),]
+  label_data <- sig %>% filter(pathway != "Other")
+  
+  
+  # build label dataframe
+  labels <- list()
+  y = y_limit * (0.96875)
+  x = x_limit * (0.88679245283)
+  for (direction in c("Significant Up", "Significant Down")) {
+    for (bio_group in names(cols_three)) {
+      volcano_data[volcano_data[[change_var]] == direction &
+                     volcano_data[["pathway"]] == bio_group,] %>%
+        nrow() -> protein_count
+      r <- c(
+        "direction" = direction,
+        "bio_group" = bio_group,
+        "count" = protein_count,
+        "x" = x,
+        "y" = y
+      )
+      labels[[paste0(bio_group, direction)]] <- r
+      y <- y - (y_limit * 0.09375)
+    }
+    y <- y_limit * (0.96875)
+    x <- x * -1
+  }
+  
+  do.call("rbind", labels) %>% as.data.frame() -> count_label_df
+  
+  
+  # Plot data
+  volcano_data %>%
+    mutate(significant = compound %in% sig$compound) %>%
+    arrange(significant) -> volcano_data
+  
+  volcano_data %>%
+    ggplot(aes_string(
+      x = x_var,
+      y = y_var,
+      fill = "pathway",
+      alpha = "significant"
+    )) +
+    ylim(0, y_limit) +
+    xlim(-x_limit, x_limit) +
+    scale_alpha_manual(values = alphas_binary, guide = "none") +
+    geom_point(
+      data = volcano_data %>% filter(significant == FALSE),
+      size = 1,
+      shape = 21,
+      stroke = POINT_STROKE / 2,
+      col = "black",
+      fill = 'gray88'
+    ) +
+    geom_point(
+      data = volcano_data %>% filter(pathway == "Other", significant == TRUE),
+      size = 1,
+      shape = 21,
+      stroke = POINT_STROKE / 2,
+      col = "black"
+    ) +
+    geom_point(
+      data = volcano_data %>% filter(pathway != "Other", significant == TRUE),
+      size = 1,
+      shape = 21,
+      stroke = POINT_STROKE / 2,
+      col = "black"
+    ) +
+    guides(fill = guide_legend(ncol = 2)) +
+    geom_hline(
+      yintercept = -log10(0.05),
+      linetype = "dashed",
+      size = LINE_WIDTH
+    ) +
+    geom_vline(
+      xintercept = c(-FC_CUTOFF, FC_CUTOFF),
+      linetype = "dashed",
+      size = LINE_WIDTH
+    ) +
+    theme_test() +
+    labs(x = substitute(
+      paste(a, ' abundance, log'[2], "(", n, '/', m, ")"),
+      list(a = tolower(str_remove(target_name, "s")),n = condition, m = control_condition)
+    ),
+    y = substitute(paste('-log'[10], '(p-value)'))) +
+    scale_fill_manual(values = cols_three) +
+    scale_color_manual(values = cols_three) +
+    my_theme() +
+    theme(
+      strip.text.x = element_blank(),
+      strip.background = element_rect(colour = "white", fill = "white"),
+      legend.title = element_blank(),
+      legend.box.background = element_blank(),
+      legend.position = "top",
+      aspect.ratio = 1,
+      legend.key = element_blank(),
+      legend.box = element_blank(),
+      legend.text = element_text(
+        size = 6,
+        color = "black",
+        family = "Arial",
+        margin = margin(l = -4, r = -4)
+      ),
+      legend.margin = margin(l = -5, b = -5.5),
+      legend.box.margin = margin(l = -5, b = -5.7),
+      legend.key.spacing.y = unit(-4, "mm"),
+      legend.key.spacing.x = unit(0, "cm")
+    ) +
+    geom_label(
+      data = count_label_df,
+      mapping = aes(
+        x = as.numeric(x),
+        y = as.numeric(y),
+        label = count,
+        fill = bio_group
+      ),
+      color = "white",
+      size = 6,
+      size.unit = "pt",
+      show.legend = FALSE,
+      inherit.aes = FALSE
+    )   -> v_plot
+  if(add_labels){
+    v_plot <- v_plot +
+    geom_text_repel(
+      data = label_data[label_data[[change_var]] == "Significant Down",],
+      aes_string(
+        x = x_var,
+        y = y_var,
+        color = "pathway",
+        label = "Alias"
+      ),
+      direction    = "both",
+      box.padding = box_padding,
+      nudge_x = -nudge_x,
+      nudge_y = nudge_y,
+      show.legend = FALSE,
+      xlim = c(-label_upper_bound, -label_bound),
+      size = 1.76389,
+      #bg.color = "white",
+      max.overlaps = getOption("ggrepel.max.overlaps", default = 30),
+      min.segment.length = 0,
+      segment.size = LINE_WIDTH,
+      inherit.aes = FALSE
+    ) +
+    geom_text_repel(
+      data = label_data[label_data[[change_var]] == "Significant Up",],
+      aes_string(
+        x = x_var,
+        y = y_var,
+        color = "pathway",
+        label = "Alias"
+      ),
+      direction    = "both",
+      box.padding = box_padding,
+      nudge_x = nudge_x,
+      nudge_y = nudge_y,
+      xlim = c(label_bound, label_upper_bound),
+      force_pull = 0,
+      max.overlaps = getOption("ggrepel.max.overlaps", default = 30),
+      size = 1.76389,
+      #bg.color = "white",
+      show.legend = FALSE,
+      min.segment.length = 0,
+      segment.size = LINE_WIDTH,
+      inherit.aes = FALSE
+    ) 
+  }
+  print(v_plot)
+}
+```
+
+
+```{r}
+metabo_directory <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Vinogradova Laboratory/Henry_data processing/01_data_analysis_folders/03_Exhaustion/exhaustion/exhaustion_notebook/04_metabo_analysis/metabolite_lists/'
+metabo_lists <- NULL
+for (name in c("glycolysis", "purine_metabolism", "pyrimidine_metabolism", "TCA")){
+  metabo_lists <- paste0(metabo_directory, "KEGG", "_", name, "_mapped.csv") |> 
+    read_csv(show_col_types = FALSE) |> 
+    mutate(plotting_subcategory = name, metabolite = Match) |> 
+    select(metabolite, plotting_subcategory) |> 
+    rbind(metabo_lists) 
+  
+}
+
+volcano_data
+```
+
+
+```{r}
+metabo_lists |> 
+  pull(category) |> 
+  unique()
+```
+
+
+```{r, fig.width=2, fig.height=2.5}
+fn <-
+  paste0(results_dir, 'volcano_plots/volcano_data.csv')
+volcano_dir <- paste0(results_dir, 'volcano_plots')
+metabo_lists <- '/Users/henrysanford/dev/test_data/test_metabolomics_1/03_Metabolomics Data/20231108_LFSP1558 Report/cross_replicate_analysis/04_results/cell_volume_normalized/volcano_plots/santosh_metabolite_lists_parsed.csv' |> 
+  read_csv(show_col_types = FALSE) 
+
+fn %>% read.csv() -> volcano_data
+
+cols_three <- c(
+  "Glycolysis" = "#21918c",
+  "TCA" = "#440154",
+  "Other" = UNCHANGED_COL
+)
+
+volcano_data$compound <- volcano_data$Compound
+
+names(full_df)[names(full_df) == 'Compound'] <- 'compound'
+
+volcano_data <- merge(volcano_data, annotations_df, by.x = "compound", by.y = "NAME", all.x= TRUE)
+volcano_data <- volcano_data |>   mutate(Alias = coalesce(Alias, compound))
+
+
+glycolysis <-
+  metabo_lists %>%
+  filter(plotting_subcategory == "Glycolysis") %>%
+  pull(metabolite)
+
+tca <-
+  metabo_lists %>%
+  filter(plotting_subcategory == "TCA") %>%
+  pull(metabolite)
+
+volcano_data %>%
+  mutate(
+    pathway = case_when(
+      (compound %in% glycolysis) & (compound %in% tca) ~ "Shared",
+      compound %in% glycolysis ~ "Glycolysis",
+      compound %in% tca ~ "TCA",
+      TRUE ~ "Other"
+    )
+  ) -> volcano_data
+
+
+for (display_condition in c("LPS")) {
+  metabolite_volcano_plot(volcano_data, condition = display_condition, y_lim = 23)
+  save_plot(
+    paste0(
+      volcano_dir,
+      "TCA_glycolysis_",
+      display_condition,
+      "_vs_",
+      "M0"
+    ),
+    width = 2,
+    height = 4
+  )
+}
+
+metabo_lists -> santosh_lists
+
+purine_nucleotide <- santosh_lists %>%
+  filter(category == "Purine nucleotide") %>%
+  pull(metabolite)
+
+pyrimidine_nucleotide <- santosh_lists %>%
+  filter(category == "Pyrimidine nucleotide") %>%
+  pull(metabolite)
+
+volcano_data %>%
+  mutate(
+    pathway = case_when(
+      (compound %in% purine_nucleotide) &
+        (compound %in% pyrimidine_nucleotide) ~ "Shared",
+      compound %in% purine_nucleotide ~ "Purine nucleotide",
+      compound %in% pyrimidine_nucleotide ~ "Pyrimidine nucleotide",
+      TRUE ~ "Other"
+    )
+  ) -> volcano_data
+
+cols_three <- c(
+  "Pyrimidine nucleotide" = "#21918c",
+  "Purine nucleotide" = "#440154",
+  "Shared" = "#bade28",
+  "Other" = UNCHANGED_COL
+)
+for (display_condition in c("LPS")) {
+  v_plot <-
+    metabolite_volcano_plot(volcano_data, condition = display_condition, y_lim = 23)
+  save_plot(
+    paste0(
+      volcano_dir,
+      "purine_pyrimidine_",
+      display_condition,
+      "_vs_D2"
+    ),
+    width = 2,
+    height = 4
+  )
+}
+
+volcano_data$log2_FC_metabolomics...M0.vs..LPS..179.Metabolites.
+volcano_data[["log2_FC_metabolomics...M0.vs..TLR4..179.Metabolites."]]
+
+
+cleaned_metabo_lists <- metabo_lists  |> group_by(metabolite) |> summarise(
+  category= paste(category, collapse = ","),
+  plotting_subcategory= paste(plotting_subcategory, collapse = ",")
+) |> rename(Compound = metabolite)
+volcano_data |> select(-c(compound)) |> left_join(y = cleaned_metabo_lists, by = "Compound") |> 
+  write_csv(paste0(results_dir, 'volcano_plots/volcano_data_annotated.csv'))
+```
+
+```{r}
+volcano_dir
+```
+
+
+```{r, fig.width=3, fig.height=2}
+df <- "/Users/henrysanford/dev/test_data/macrophage/metabolomics/cross_replicate_analysis/03_combined_files/combreplicates_channel_ratio.csv" |> 
+  read_csv(show_col_types = FALSE) |> 
+  filter(Compound %in% c("Guanosine triphosphate", "Guanosine diphosphate", "Guanosine monophosphate"))  |> 
+  pivot_longer(cols = contains("_d")) |> 
+  separate_wider_delim(name, delim = "_", names =c( "condition", "donor", "technical_replicate"))
+medians <-  df |> 
+  filter(condition == "M0") |> 
+  group_by(donor)  |> 
+  summarise(median = median(value)) |> 
+  ungroup()
+
+df |> 
+  left_join(y = medians, by = c("donor"))  |> 
+  mutate(percent_control = (value / median) * 100) |> 
+  mutate(condition = factor(condition, levels = c("M0", "LPS"))) |> 
+  ggplot(aes(x = condition, y = percent_control, fill = condition)) +
+    geom_bar(
+      aes(x = condition, y = percent_control, fill = condition),
+      stat = "summary",
+      fun = "mean",
+      width = 0.65,
+      color = "black",
+      alpha = 0.8,
+      size = LINE_WIDTH,
+      show.legend = FALSE,
+      inherit.aes = FALSE,
+    ) + 
+  stat_summary(fun.data = mean_se,geom = "errorbar",width = 0.3,size = LINE_WIDTH) +
+  geom_beeswarm(stroke = LINE_WIDTH,
+                shape =21,
+      corral.width = 1.5,
+      cex = 2,
+      alpha = 0.8,
+      size = 1,
+      #fill = "grey90",
+      color = "black",
+      show.legend = FALSE) +
+  my_theme() +
+  geom_hline(yintercept = 100, linewidth = LINE_WIDTH, linetype = "dashed") +
+  scale_fill_manual(values = c("#AAAAAA", "#FFCC31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) + 
+  labs(x = NULL, y = "metabolite abundance (%M0)") +
+  theme(panel.border = element_blank(), axis.line.x = AXIS_LINE, axis.line.y = AXIS_LINE, strip.text = element_text(size = 6, color = "black", family = "Arial"),  strip.clip = "off", strip.background = element_blank()) +
+  facet_wrap(~Compound)
+ggsave("GTP_abundance.svg")
+
+
+df |> 
+  left_join(y = medians, by = c("donor"))  |> 
+  mutate(percent_control = (value / median) * 100) |> 
+  arrange(desc(percent_control))
+  
+```
+
+```{r, fig.width=1, fig.height=2}
+df <- '/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/07_metabolomics/analysis/04_results/combined_metabolite_table.xlsx' |> 
+  read_excel() |> 
+  filter(Compound %in% c("Guanosine triphosphate"))  |> 
+  select(
+    Compound, contains("cell-volume-normalized")
+  ) |> 
+  pivot_longer(cols = contains("_d")) |> 
+  separate_wider_delim(name, delim = "_", names =c( "condition", "donor", "technical_replicate"), too_many = "drop")
+medians <- df |> 
+  filter(condition == "M0") |> 
+  group_by(donor, Compound)  |> 
+  summarise(median = median(value)) |> 
+  ungroup()
+
+df |> 
+  left_join(y = medians, by = c("donor", "Compound"))  |> 
+  mutate(percent_control = (value / median) * 100) |> 
+  mutate(condition = factor(condition, levels = c("M0", "LPS"))) |> 
+  ggplot(aes(x = condition, y = percent_control, fill = condition)) +
+    geom_bar(
+      aes(x = condition, y = percent_control, fill = condition),
+      stat = "summary",
+      fun = "mean",
+      width = 0.65,
+      color = "black",
+      alpha = 0.8,
+      size = LINE_WIDTH,
+      show.legend = FALSE,
+      inherit.aes = FALSE,
+    ) + 
+  stat_summary(fun.data = mean_se,geom = "errorbar",width = 0.3,size = LINE_WIDTH) +
+  geom_beeswarm(stroke = LINE_WIDTH,
+                shape =21,
+      corral.width = 1.5,
+      cex = 2,
+      alpha = 0.8,
+      size = 1,
+      #fill = "grey90",
+      color = "black",
+      show.legend = FALSE) +
+  my_theme() +
+  geom_hline(yintercept = 100, linewidth = LINE_WIDTH, linetype = "dashed") +
+  scale_fill_manual(values = c("#AAAAAA", "#FFCC31")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) + 
+  labs(x = NULL, y = "metabolite abundance (%M0)") +
+  theme(panel.border = element_blank(), axis.line.x = AXIS_LINE, axis.line.y = AXIS_LINE, strip.text = element_text(size = 6, color = "black", family = "Arial"),  strip.clip = "off", strip.background = element_blank()) +
+  facet_wrap(~Compound)
+ggsave("GTP_abundance.svg")
+
+medians |> 
+  filter(Compound == "Guanosine triphosphate", donor == "dA")
+  
+```
+
+
+
+
