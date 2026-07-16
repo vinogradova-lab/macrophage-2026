@@ -7,7 +7,7 @@
                               PCA loadings, one block per principal component.
   S2-4 GO-term enrichment     per significant GO term: Fisher-exact enrichment across the WP,
                               reactivity, phospho, and IP-MS analyses, tagged with
-                              dataset/background.
+                              dataset/background and the panel it is plotted in.
   S2-5 Reactivity changes     per protein: per-stimulus IA-DTB reactivity blocks.
   S2-6 Phosphoproteomics      per phosphosite: expression-normalized per-replicate ratios,
                               TLR4-vs-M0 stats, and UniProt function.
@@ -177,20 +177,26 @@ GO_STD_COLS = [
     "ontology", "GO_id", "Term", "Overlap", "n_proteins",
     "p_value", "adjusted_p_value", "neg_log10_fdr", "Genes",
 ]
-GO_TAG_COLS = ["Dataset", "Analysis", "Subset", "Background"]
+GO_TAG_COLS = ["Dataset", "Analysis", "Subset", "Background", "Relevant figure"]
 GO_OUT_COLS = GO_TAG_COLS + GO_STD_COLS
 
 # Per-test background (the clusterProfiler `universe`), spelled out in the table per the caption.
 GO_BG_ALL = "All annotated genes (MSigDB 2026.1.Hs C5 GO)"
 GO_BG_WP_DETECTED = "Per-comparison detected proteome"
 
-# Source CSVs. The WP and reactivity results live under the absolute Manuscript figure tree;
-# the two phospho results are written into the repo's phosphoproteomics/ folder.
+# The panel each term is plotted in, per "Relevant figure". Most analyses map to one panel (a
+# scalar passed to _tag_go); the two below vary per row. Every row must land on a panel --
+# build_go_enrichment() enforces it -- so CROSS_OMICS_FIGURES doubles as that block's whitelist:
+# its GTPase activity terms are enriched but not shown in the manuscript.
+PHOSPHO_BP_FIGURES = {"Upregulated": "Figure 3g", "Downregulated": "Extended Data Fig. 5d"}
+CROSS_OMICS_FIGURES = {
+    "Endosomal transport": "Extended Data Fig. 5f",
+    "Vesicle-mediated transport": "Extended Data Fig. 5k",
+}
+
+# Source CSVs. The WP, cross-omics, and IP-MS results live under the absolute Manuscript figure
+# tree; the phospho and reactivity-CC results are written into the repo's phosphoproteomics/ folder.
 WP_GO_CSV = FIGURE1_PANELS / "go_wp_vs_RNA" / "rna_vs_wp_correlation_go_term_analysis_BP.csv"
-RC_TLR4_GO_CSV = (
-    MANUSCRIPT / "02_Figures/6-figure format_EV"
-    / "Figure 2_Reactivity_part1_GTPase regulation/Panels/go_enrichment/go_results.csv"
-)
 CROSS_OMICS_GO_CSV = (
     MANUSCRIPT / "02_Figures/6-figure format_EV"
     / "Figure 3_Reactivity_part2_endocytosis/Panels/go_term_venn_diagram"
@@ -198,7 +204,9 @@ CROSS_OMICS_GO_CSV = (
 )
 PHOSPHO_DIR = REPO_ROOT / "phosphoproteomics"
 PHOSPHO_BP_GO_CSV = PHOSPHO_DIR / "go_bp_phospho.csv"
-PHOSPHO_CC_GO_CSV = PHOSPHO_DIR / "go_cc_reactivity.csv"
+# A reactivity analysis despite the folder: visualization.Rmd's "# Reactivity enrichment" chunk
+# runs it over reactivity-change proteins and writes it relative to its own working directory.
+RC_CC_GO_CSV = PHOSPHO_DIR / "go_cc_reactivity.csv"
 IPMS_GO_CSV = (
     MANUSCRIPT / "02_Figures/6-figure format_EV"
     / "Figure 5/Panels/Tbck_IP_GO-term_crapome_filter/go_term_results.csv"
@@ -210,7 +218,8 @@ GO_TITLE = (
 )
 GO_DESCRIPTION = (
     "Fisher's exact test and the 2026 MSigDB gene sets were used for all analyses, and the "
-    "background for each test is specified in the table. Only significant terms are shown."
+    "background for each test is specified in the table. Only significant terms are shown. "
+    "'Relevant figure' gives the panel in which each term is plotted."
 )
 
 # --- S2-3: GSEA of the WP PCA loadings ----------------------------------------------------
@@ -509,17 +518,19 @@ def build_ipms():
     return out.merge(spine[["uniprot"] + IPMS_CRAPOME_COLS], on="uniprot", how="left")
 
 
-def _tag_go(df, dataset, analysis, background, subset=""):
-    """Add the four tag columns and return the unified S2-4 column order.
+def _tag_go(df, dataset, analysis, background, subset="", figure=""):
+    """Add the five tag columns and return the unified S2-4 column order.
 
-    ``subset`` is a per-row facet (Series aligned on ``df``'s index) or a scalar label; any
-    standard column the source lacks (e.g. Overlap for the cross-omics frame) is filled with NA.
+    ``subset`` and ``figure`` are each a per-row value (Series aligned on ``df``'s index) or a
+    scalar label; any standard column the source lacks (e.g. Overlap for the cross-omics frame)
+    is filled with NA.
     """
     out = df.copy()
     out["Dataset"] = dataset
     out["Analysis"] = analysis
     out["Subset"] = subset
     out["Background"] = background
+    out["Relevant figure"] = figure
     for col in GO_STD_COLS:
         if col not in out.columns:
             out[col] = pd.NA
@@ -539,20 +550,7 @@ def load_wp_go():
         + " (" + df["color"].astype(str) + ")"
     )
     return _tag_go(df, "Whole proteome", "RNA-vs-WP correlation quadrants (GO:BP)",
-                   GO_BG_WP_DETECTED, subset)
-
-
-def load_reactivity_tlr4_go():
-    """S2-4: TLR4 cysteine-reactive proteins, GO:BP over-representation (all-annotated background)."""
-    path = require(RC_TLR4_GO_CSV, "Re-run reactivity/rc_visualization.Rmd (go_enrich chunk).")
-    df = pd.read_csv(path)
-    if "adjusted_p_value" not in df.columns:
-        sys.exit(
-            f"ERROR: {path} is the old enrichGO schema (pre go_enrich() refactor).\n"
-            "Re-run the go_enrich() chunk in reactivity/rc_visualization.Rmd to refresh it."
-        )
-    df = df[(df["adjusted_p_value"] < 0.05) & (df["n_proteins"] > 5)]
-    return _tag_go(df, "Reactivity", "TLR4-reactive proteins (GO:BP)", GO_BG_ALL)
+                   GO_BG_WP_DETECTED, subset, "Extended Data Fig. 2b")
 
 
 def load_cross_omics_go():
@@ -561,13 +559,16 @@ def load_cross_omics_go():
     The source is one row per (GO term, omic) and is NOT pre-filtered (the figure shows the same
     terms across omics for contrast), so the standard cutoff is applied here to keep only the
     significant cells. Schema differs: ``ont`` -> ontology, ``omic`` -> Subset; Overlap is absent
-    (filled NA) and neg_log10_fdr is derived from the BH p-value.
+    (filled NA) and neg_log10_fdr is derived from the BH p-value. The panel varies by term, so
+    CROSS_OMICS_FIGURES also selects which terms are kept.
     """
     path = require(CROSS_OMICS_GO_CSV, "Re-run reactivity/rc_visualization.Rmd (cross-omics chunk).")
     df = pd.read_csv(path).rename(columns={"ont": "ontology"})
     df = df[(df["adjusted_p_value"] < 0.05) & (df["n_proteins"] > 5)]
+    df = df[df["Term"].isin(CROSS_OMICS_FIGURES)]
     df["neg_log10_fdr"] = -np.log10(df["adjusted_p_value"])
-    return _tag_go(df, "Cross-omics", "Cross-omics significant changes", GO_BG_ALL, df["omic"])
+    return _tag_go(df, "Cross-omics", "Cross-omics significant changes", GO_BG_ALL, df["omic"],
+                   df["Term"].map(CROSS_OMICS_FIGURES))
 
 
 def load_phospho_bp_go():
@@ -576,15 +577,20 @@ def load_phospho_bp_go():
     df = pd.read_csv(path)
     df = df[(df["adjusted_p_value"] < 0.01) & (df["n_proteins"] > 5)]
     return _tag_go(df, "Phosphoproteomics", "Phosphosite up/down (GO:BP)", GO_BG_ALL,
-                   df["direction"])
+                   df["direction"], df["direction"].map(PHOSPHO_BP_FIGURES))
 
 
-def load_phospho_cc_go():
-    """S2-4: phospho-substrate localization, GO:CC over-representation (all-annotated background)."""
-    path = require(PHOSPHO_CC_GO_CSV, "Re-run phosphoproteomics/visualization.Rmd (go_cc chunk).")
+def load_reactivity_cc_go():
+    """S2-4: reactive-protein localization, GO:CC over-representation (all-annotated background).
+
+    Despite the source's name and folder this is a reactivity analysis, not a phospho one: the
+    chunk runs over proteins with a reactivity change (see RC_CC_GO_CSV).
+    """
+    path = require(RC_CC_GO_CSV, "Re-run phosphoproteomics/visualization.Rmd (go_cc chunk).")
     df = pd.read_csv(path)
     df = df[(df["adjusted_p_value"] < 0.2) & (df["n_proteins"] > 5)]
-    return _tag_go(df, "Phosphoproteomics", "Phosphosite localization (GO:CC)", GO_BG_ALL)
+    return _tag_go(df, "Reactivity", "Reactive proteins localization (GO:CC)", GO_BG_ALL,
+                   figure="Figure 2b")
 
 
 def load_ipms_mf_go():
@@ -602,20 +608,32 @@ def load_ipms_mf_go():
     df = df.assign(
         ontology="MF", Term=df["Term"].str.replace("\n", " ", regex=False)
     )
-    return _tag_go(df, "IP-MS", "TBCK IP co-enriched proteins (GO:MF)", GO_BG_ALL)
+    return _tag_go(df, "IP-MS", "TBCK IP co-enriched proteins (GO:MF)", GO_BG_ALL,
+                   figure="Extended Data Fig. 7e")
 
 
 def build_go_enrichment():
-    """S2-4: significant GO-term enrichment across WP, reactivity, phospho, and IP-MS, one table."""
+    """S2-4: significant GO-term enrichment across WP, reactivity, phospho, and IP-MS, one table.
+
+    Every term in the sheet is plotted in a panel, so a row without one means a source grew a
+    facet the figure maps do not cover (a renamed direction, a new cross-omics term).
+    """
     blocks = [
         load_wp_go(),
-        load_reactivity_tlr4_go(),
         load_cross_omics_go(),
         load_phospho_bp_go(),
-        load_phospho_cc_go(),
+        load_reactivity_cc_go(),
         load_ipms_mf_go(),
     ]
-    return pd.concat(blocks, ignore_index=True)
+    out = pd.concat(blocks, ignore_index=True)
+    unmapped = out[out["Relevant figure"].isna() | out["Relevant figure"].eq("")]
+    if not unmapped.empty:
+        sys.exit(
+            "ERROR: no 'Relevant figure' for "
+            f"{sorted(set(zip(unmapped['Analysis'], unmapped['Subset'])))}.\n"
+            "Add the panel to PHOSPHO_BP_FIGURES/CROSS_OMICS_FIGURES or the loader's figure=."
+        )
+    return out
 
 
 def build_pc_gsea():
