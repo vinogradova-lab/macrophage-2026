@@ -3,18 +3,19 @@
   S2-1 Unenriched proteomics  per protein: per-replicate abundances, per-stimulus-vs-M0 stats,
                               functional-category flags.
   S2-2 Bulk RNA vs WP         per gene/protein: per-comparison RNA (DESeq2) and WP fold changes.
-  S2-3 Reactivity changes     per protein: per-stimulus IA-DTB reactivity blocks.
-  S2-4 Immunoprecipitation MS the two FERRY-subunit IP-MS pulldowns merged on uniprot.
-  S2-5 GO-term enrichment     per significant GO term: Fisher-exact enrichment across the WP,
-                              reactivity, and phospho analyses, tagged with dataset/background.
-  S2-6 GSEA of PC loadings    per significant GO:BP term: pre-ranked GSEA of the whole-proteome
+  S2-3 GSEA of PC loadings    per significant GO:BP term: pre-ranked GSEA of the whole-proteome
                               PCA loadings, one block per principal component.
-  S2-7 Phosphoproteomics      per phosphosite: expression-normalized per-replicate ratios,
+  S2-4 GO-term enrichment     per significant GO term: Fisher-exact enrichment across the WP,
+                              reactivity, phospho, and IP-MS analyses, tagged with
+                              dataset/background.
+  S2-5 Reactivity changes     per protein: per-stimulus IA-DTB reactivity blocks.
+  S2-6 Phosphoproteomics      per phosphosite: expression-normalized per-replicate ratios,
                               TLR4-vs-M0 stats, and UniProt function.
+  S2-7 Immunoprecipitation MS the two FERRY-subunit IP-MS pulldowns merged on uniprot.
 
 Run after wp_downstream_analysis.ipynb has generated the volcano/wp_vs_rnaseq/GSEA tables and
-the three visualization .Rmd files have written their go_enrich() CSVs (see the S2-5 loaders).
-S2-7 additionally needs phosphoproteomics.ipynb to have written the expression-normalized
+the three visualization .Rmd files have written their go_enrich() CSVs (see the S2-4 loaders).
+S2-6 additionally needs phosphoproteomics.ipynb to have written the expression-normalized
 phosphorylation table to the manuscript tree (see PHOSPHO_TABLE_CSV).
 
     conda run -n polars python whole_proteome/build_data_s2.py
@@ -104,7 +105,7 @@ RNA_DESCRIPTION = (
     "from n = 3 donors each (different donors for each assay)."
 )
 
-RC_SHEET_NAME = "S2-3 Reactivity changes"
+RC_SHEET_NAME = "S2-5 Reactivity changes"
 RC_TITLE = (
     "Cysteine reactivity changes identified from IA-DTB reactivity TMT-ABPP data "
     "(related to Figures 2, 3, and 4, and Extended Data Fig. 3, 4, 5, and 6)."
@@ -140,7 +141,7 @@ RC_CROSS_REF_COLS = [
 ]
 
 # IP-MS: the two endogenous FERRY-subunit pulldowns, merged into one sheet on uniprot.
-IPMS_SHEET_NAME = "S2-4 Immunoprecipitation MS"
+IPMS_SHEET_NAME = "S2-7 Immunoprecipitation MS"
 IPMS_FILES = [("ipms_table_Fy2.csv", "Fy2"), ("ipms_table_Tbck.csv", "Tbck")]
 # Shared identifier/annotation columns (front) and CRAPome columns (back); the remaining,
 # bait-specific columns already carry the bait name (e.g. M0-Fy2_d1_1, p_value_LPS-Tbck ...).
@@ -167,7 +168,7 @@ IPMS_DESCRIPTION = (
     "donors (different donors for each immunoprecipitation assay)."
 )
 
-# --- S2-5: GO-term enrichment across modalities -------------------------------------------
+# --- S2-4: GO-term enrichment across modalities -------------------------------------------
 # Each per-analysis CSV is a go_enrich() output from the three visualization .Rmd files
 # (macrophage_figure_setting.R: clusterProfiler::enricher over MSigDB 2026.1.Hs C5 GO),
 # normalized to one flat table of four tag columns + the standard go_enrich() schema. Only
@@ -198,8 +199,12 @@ CROSS_OMICS_GO_CSV = (
 PHOSPHO_DIR = REPO_ROOT / "phosphoproteomics"
 PHOSPHO_BP_GO_CSV = PHOSPHO_DIR / "go_bp_phospho.csv"
 PHOSPHO_CC_GO_CSV = PHOSPHO_DIR / "go_cc_reactivity.csv"
+IPMS_GO_CSV = (
+    MANUSCRIPT / "02_Figures/6-figure format_EV"
+    / "Figure 5/Panels/Tbck_IP_GO-term_crapome_filter/go_term_results.csv"
+)
 
-GO_SHEET_NAME = "S2-5 GO-term enrichment"
+GO_SHEET_NAME = "S2-4 GO-term enrichment"
 GO_TITLE = (
     "GO-term enrichment analysis of whole proteome, reactivity, and phosphoproteomic data"
 )
@@ -208,7 +213,7 @@ GO_DESCRIPTION = (
     "background for each test is specified in the table. Only significant terms are shown."
 )
 
-# --- S2-6: GSEA of the WP PCA loadings ----------------------------------------------------
+# --- S2-3: GSEA of the WP PCA loadings ----------------------------------------------------
 # One gseapy.prerank report per PC, written by wp_downstream_analysis.ipynb
 # (perform_gsea_proteomics): that PC's protein loadings ranked and tested against MSigDB
 # 2026.1.Hs c5.go.bp, 1000 permutations, BH correction, seed 42. Kept at the same FDR cutoff
@@ -222,7 +227,7 @@ PCA_GSEA_COLS = [
     "Tag %", "Gene %", "Lead_genes",
 ]
 
-GSEA_SHEET_NAME = "S2-6 GSEA of PC loadings"
+GSEA_SHEET_NAME = "S2-3 GSEA of PC loadings"
 GSEA_TITLE = (
     "Gene set enrichment analysis of whole proteome PCA loadings "
     "(related to Figure 1 and Extended Data Fig. 1)"
@@ -234,7 +239,7 @@ GSEA_DESCRIPTION = (
     "(FDR q-value < 0.01) are shown."
 )
 
-# --- S2-7: expression-normalized phosphoproteomics -----------------------------------------
+# --- S2-6: expression-normalized phosphoproteomics -----------------------------------------
 # Written by phosphoproteomics.ipynb: median-normalized channel ratios divided by that protein's
 # whole-proteome fold change (an inner join on uniprot/condition, which is what trims 11,690
 # sites to 9,591), then an unpaired t-test of all TLR4 channels vs all M0 channels. This is the
@@ -263,7 +268,7 @@ _PHOSPHO_STAT_SUFFIX = re.compile(r"^(?P<metric>.+?)_phospho - (?P<comp>.+? vs\.
 # 4 donors (d1, d2, d3, d5) x 3 technical replicates x 2 conditions.
 _PHOSPHO_CHANNEL = re.compile(r"^(M0|TLR4)_d\d+_\d+$")
 
-PHOSPHO_SHEET_NAME = "S2-7 Phosphoproteomics"
+PHOSPHO_SHEET_NAME = "S2-6 Phosphoproteomics"
 PHOSPHO_TITLE = (
     "Expression-normalized phosphoproteomics data from M0 and LPS stimulated macrophages "
     "(related to Figure 3 and Extended Data Fig. 4 and 5)"
@@ -459,7 +464,7 @@ def build_cross_ref_block(rc_wide):
 
 
 def build_reactivity():
-    """S2-3: per-stimulus IA-DTB reactivity blocks + the funnel's cross-reference evidence.
+    """S2-5: per-stimulus IA-DTB reactivity blocks + the funnel's cross-reference evidence.
 
     One row per protein with a reactivity change in at least one condition (as the sheet's
     description says), from the current run's long-format table via src.reactivity.pivot_rc_wide.
@@ -477,7 +482,7 @@ def build_reactivity():
 
 
 def build_ipms():
-    """S2-4: the two FERRY-subunit IP-MS tables merged on uniprot into one sheet.
+    """S2-7: the two FERRY-subunit IP-MS tables merged on uniprot into one sheet.
 
     Shared identifier/annotation columns lead and the CRAPome columns trail; each bait's own
     signal and stat columns (which already carry the bait name) sit between them, Fy2 then Tbck.
@@ -505,7 +510,7 @@ def build_ipms():
 
 
 def _tag_go(df, dataset, analysis, background, subset=""):
-    """Add the four tag columns and return the unified S2-5 column order.
+    """Add the four tag columns and return the unified S2-4 column order.
 
     ``subset`` is a per-row facet (Series aligned on ``df``'s index) or a scalar label; any
     standard column the source lacks (e.g. Overlap for the cross-omics frame) is filled with NA.
@@ -522,7 +527,7 @@ def _tag_go(df, dataset, analysis, background, subset=""):
 
 
 def load_wp_go():
-    """S2-5: WP RNA-vs-WP correlation-quadrant GO:BP (per-comparison detected-proteome background).
+    """S2-4: WP RNA-vs-WP correlation-quadrant GO:BP (per-comparison detected-proteome background).
 
     Source is already BP-only and quadrant-labeled (condition/direction/color); the figure cutoff
     is re-applied defensively.
@@ -538,7 +543,7 @@ def load_wp_go():
 
 
 def load_reactivity_tlr4_go():
-    """S2-5: TLR4 cysteine-reactive proteins, GO:BP over-representation (all-annotated background)."""
+    """S2-4: TLR4 cysteine-reactive proteins, GO:BP over-representation (all-annotated background)."""
     path = require(RC_TLR4_GO_CSV, "Re-run reactivity/rc_visualization.Rmd (go_enrich chunk).")
     df = pd.read_csv(path)
     if "adjusted_p_value" not in df.columns:
@@ -551,7 +556,7 @@ def load_reactivity_tlr4_go():
 
 
 def load_cross_omics_go():
-    """S2-5: cross-omics enrichment of the TLR4 shared/omic-specific changes.
+    """S2-4: cross-omics enrichment of the TLR4 shared/omic-specific changes.
 
     The source is one row per (GO term, omic) and is NOT pre-filtered (the figure shows the same
     terms across omics for contrast), so the standard cutoff is applied here to keep only the
@@ -566,7 +571,7 @@ def load_cross_omics_go():
 
 
 def load_phospho_bp_go():
-    """S2-5: up/down-phosphorylated proteins, GO:BP over-representation (all-annotated background)."""
+    """S2-4: up/down-phosphorylated proteins, GO:BP over-representation (all-annotated background)."""
     path = require(PHOSPHO_BP_GO_CSV, "Re-run phosphoproteomics/visualization.Rmd (go_enrich chunk).")
     df = pd.read_csv(path)
     df = df[(df["adjusted_p_value"] < 0.01) & (df["n_proteins"] > 5)]
@@ -575,27 +580,46 @@ def load_phospho_bp_go():
 
 
 def load_phospho_cc_go():
-    """S2-5: phospho-substrate localization, GO:CC over-representation (all-annotated background)."""
+    """S2-4: phospho-substrate localization, GO:CC over-representation (all-annotated background)."""
     path = require(PHOSPHO_CC_GO_CSV, "Re-run phosphoproteomics/visualization.Rmd (go_cc chunk).")
     df = pd.read_csv(path)
     df = df[(df["adjusted_p_value"] < 0.2) & (df["n_proteins"] > 5)]
     return _tag_go(df, "Phosphoproteomics", "Phosphosite localization (GO:CC)", GO_BG_ALL)
 
 
+def load_ipms_mf_go():
+    """S2-4: TBCK IP-MS co-enriched proteins, GO:MF over-representation (all-annotated background).
+
+    The source carries all three ontologies for both pulldown gene sets; the panel plots the TBCK
+    MF terms only, so the rest are dropped here. Two figure-formatting artifacts of the .Rmd's
+    ``mutate()`` are undone to match the other blocks' schema: ``ontology`` is written
+    "MF ontology", and ``Term`` carries str_wrap() newlines.
+    """
+    path = require(IPMS_GO_CSV, "Re-run the Enrichment chunk in whole_proteome/wp_visualization.Rmd.")
+    df = pd.read_csv(path)
+    df = df[df["dataset"].eq("Tbck") & df["ontology"].eq("MF ontology")]
+    df = df[(df["adjusted_p_value"] < 0.05) & (df["n_proteins"] > 5)]
+    df = df.assign(
+        ontology="MF", Term=df["Term"].str.replace("\n", " ", regex=False)
+    )
+    return _tag_go(df, "IP-MS", "TBCK IP co-enriched proteins (GO:MF)", GO_BG_ALL)
+
+
 def build_go_enrichment():
-    """S2-5: significant GO-term enrichment across WP, reactivity, and phospho, one flat table."""
+    """S2-4: significant GO-term enrichment across WP, reactivity, phospho, and IP-MS, one table."""
     blocks = [
         load_wp_go(),
         load_reactivity_tlr4_go(),
         load_cross_omics_go(),
         load_phospho_bp_go(),
         load_phospho_cc_go(),
+        load_ipms_mf_go(),
     ]
     return pd.concat(blocks, ignore_index=True)
 
 
 def build_pc_gsea():
-    """S2-6: significant pre-ranked GSEA hits for each PCA loading vector, one flat table.
+    """S2-3: significant pre-ranked GSEA hits for each PCA loading vector, one flat table.
 
     One gseapy report per PC, concatenated behind a leading ``PC`` tag column. Within a PC rows
     run from the most positive to the most negative NES, so they read from the +PC end of the
@@ -611,7 +635,7 @@ def build_pc_gsea():
 
 
 def build_phospho():
-    """S2-7: per phosphosite identifiers + UniProt function + TLR4-vs-M0 stats + channels."""
+    """S2-6: per phosphosite identifiers + UniProt function + TLR4-vs-M0 stats + channels."""
     path = require(
         PHOSPHO_TABLE_CSV,
         "Run phosphoproteomics/phosphoproteomics.ipynb first to generate it "
@@ -646,13 +670,13 @@ def main():
     sheets = [
         SuppSheet(1, WP_SHEET_NAME, WP_TITLE, WP_DESCRIPTION, build_whole_proteome()),
         SuppSheet(2, RNA_SHEET_NAME, RNA_TITLE, RNA_DESCRIPTION, build_rna_vs_wp()),
-        SuppSheet(3, RC_SHEET_NAME, RC_TITLE, RC_DESCRIPTION, build_reactivity()),
-        SuppSheet(4, IPMS_SHEET_NAME, IPMS_TITLE, IPMS_DESCRIPTION, build_ipms()),
-        SuppSheet(5, GO_SHEET_NAME, GO_TITLE, GO_DESCRIPTION, build_go_enrichment()),
-        SuppSheet(6, GSEA_SHEET_NAME, GSEA_TITLE, GSEA_DESCRIPTION, build_pc_gsea()),
+        SuppSheet(3, GSEA_SHEET_NAME, GSEA_TITLE, GSEA_DESCRIPTION, build_pc_gsea()),
+        SuppSheet(4, GO_SHEET_NAME, GO_TITLE, GO_DESCRIPTION, build_go_enrichment()),
+        SuppSheet(5, RC_SHEET_NAME, RC_TITLE, RC_DESCRIPTION, build_reactivity()),
         SuppSheet(
-            7, PHOSPHO_SHEET_NAME, PHOSPHO_TITLE, PHOSPHO_DESCRIPTION, build_phospho()
+            6, PHOSPHO_SHEET_NAME, PHOSPHO_TITLE, PHOSPHO_DESCRIPTION, build_phospho()
         ),
+        SuppSheet(7, IPMS_SHEET_NAME, IPMS_TITLE, IPMS_DESCRIPTION, build_ipms()),
     ]
     write_supplementary_workbook(OUTPUT_XLSX, sheets)
     print(f"Wrote {OUTPUT_XLSX}")
