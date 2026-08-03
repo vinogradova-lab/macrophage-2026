@@ -15,70 +15,29 @@ import glob
 import os
 import re
 
-import matplotlib
-
-matplotlib.use("Agg")  # headless: render to files, never open a window
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from scipy import stats
 
-CONDITIONS = ["M0", "LPS"]
+from pla_plotting import (
+    AGGS,
+    CONDITIONS,
+    LINE_WIDTH,
+    VIOLIN_FIGSIZE,
+    VIOLIN_RECT,
+    donor_palette,
+    grand_summary,
+    paired_ttest,
+    plot_swarm,
+    slugify,
+    summarize_donors,
+)
+
 DEFAULT_DATA_ROOT = os.path.join(os.path.dirname(__file__), "20260713_PLA_region_analysis")
 DEFAULT_METRIC = "Ch1_Particle_Count"
 EXCLUDE_DONORS = ["20260616", "20260513"]  # date-named samples dropped for the robustness variants
 EXCLUDE_SLUG = "_".join(EXCLUDE_DONORS)
-AGGS = ["mean", "median"]
-
-FONT_SIZE = 6
-LINE_WIDTH = 0.25
-
-# Panel-scale geometry. Figure size and axes rect are both pinned, and figures are saved
-# without bbox_inches="tight", so every plot lands with a byte-identical axes box and can
-# be dropped into a figure panel side by side. The rect leaves room on the right for the
-# legend, which sits outside the axes.
-SWARM_FIGSIZE = (2.7, 1.7)
-SWARM_RECT = dict(left=0.20, right=0.68, bottom=0.20, top=0.88)
-VIOLIN_FIGSIZE = (4.0, 1.7)
-VIOLIN_RECT = dict(left=0.13, right=0.83, bottom=0.20, top=0.88)
-CELL_MARKER_AREA = 1.5  # per-cell dots, scatter `s` (points^2)
-DONOR_MARKER_DIAM = 4.5  # donor-summary dots, swarmplot `size` (points)
-
-# Donors are assigned these in sorted-donor order.
-DONOR_COLORS = [
-    "#AAAAAA",
-    "#EC2427",
-    "#F58420",
-    "#FFCC31",
-    "#4869B2",
-    "#5CBED7",
-    "#237D41",
-    "#742D16",
-]
-
-plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
-    "font.size": FONT_SIZE,
-    "axes.titlesize": FONT_SIZE,
-    "axes.labelsize": FONT_SIZE,
-    "xtick.labelsize": FONT_SIZE,
-    "ytick.labelsize": FONT_SIZE,
-    "legend.fontsize": FONT_SIZE,
-    "legend.title_fontsize": FONT_SIZE,
-    "axes.spines.top": False,  # x and y axis lines only, no bounding box
-    "axes.spines.right": False,
-    "axes.linewidth": LINE_WIDTH,
-    "lines.linewidth": LINE_WIDTH,
-    "patch.linewidth": LINE_WIDTH,
-    "grid.linewidth": LINE_WIDTH,
-    "xtick.major.width": LINE_WIDTH,
-    "ytick.major.width": LINE_WIDTH,
-    "xtick.minor.width": LINE_WIDTH,
-    "ytick.minor.width": LINE_WIDTH,
-})
 
 
 # ------------------------------------------------------------------
@@ -114,140 +73,8 @@ def load_folder(folder_path, metric):
 
 
 # ------------------------------------------------------------------
-# Summaries & statistics
-# ------------------------------------------------------------------
-def summarize_donors(data, metric, agg):
-    """Collapse per-cell rows to one value per Donor x Condition using `agg`."""
-    return (
-        data.groupby(["Condition", "Donor"], observed=True)[metric]
-        .agg(agg)
-        .reset_index()
-        .rename(columns={metric: "donor_value"})
-    )
-
-
-def grand_summary(donor_means):
-    """Per-condition mean / SEM / n across the donor summary values (the black bars)."""
-    return (
-        donor_means.groupby("Condition", observed=True)["donor_value"]
-        .agg(mean="mean", sem=lambda x: x.std(ddof=1) / np.sqrt(len(x)), n="count")
-        .reset_index()
-    )
-
-
-def paired_ttest(donor_means):
-    """Paired t-test across donors present in both conditions.
-
-    Returns (tstat, pval, n_donors). If fewer than 2 paired donors, returns
-    (nan, nan, n_donors).
-    """
-    common = set(donor_means.loc[donor_means["Condition"] == "M0", "Donor"]) & set(
-        donor_means.loc[donor_means["Condition"] == "LPS", "Donor"]
-    )
-    n = len(common)
-    if n < 2:
-        return float("nan"), float("nan"), n
-
-    m0 = (
-        donor_means[(donor_means.Condition == "M0") & (donor_means.Donor.isin(common))]
-        .sort_values("Donor")["donor_value"]
-        .values
-    )
-    lps = (
-        donor_means[(donor_means.Condition == "LPS") & (donor_means.Donor.isin(common))]
-        .sort_values("Donor")["donor_value"]
-        .values
-    )
-    tstat, pval = stats.ttest_rel(m0, lps)
-    return tstat, pval, n
-
-
-# ------------------------------------------------------------------
 # Plots (saved to disk)
 # ------------------------------------------------------------------
-def donor_palette(data):
-    """Donor -> color. Built once from the full folder so colors are stable across variants."""
-    donors = sorted(data["Donor"].unique())
-    if len(donors) > len(DONOR_COLORS):
-        raise ValueError(
-            f"{len(donors)} donors but only {len(DONOR_COLORS)} colors in DONOR_COLORS"
-        )
-    return dict(zip(donors, DONOR_COLORS))
-
-
-def plot_swarm(data, donor_means, grand, metric, out_svg, palette, title):
-    """Per-cell dots + donor summary dots + mean±SEM bars + paired-t P annotation."""
-    donors = sorted(data["Donor"].unique())
-    x_pos = {c: i for i, c in enumerate(CONDITIONS)}
-
-    fig, ax = plt.subplots(figsize=SWARM_FIGSIZE)
-
-    # small individual-cell dots, jittered, colored by donor
-    rng = np.random.default_rng(0)
-    for cond in CONDITIONS:
-        sub = data[data["Condition"] == cond]
-        for donor in donors:
-            vals = sub.loc[sub["Donor"] == donor, metric]
-            if len(vals) == 0:
-                continue
-            jitter = rng.uniform(-0.15, 0.15, size=len(vals))
-            ax.scatter(
-                x_pos[cond] + jitter, vals,
-                color=palette[donor], alpha=0.6, s=CELL_MARKER_AREA, zorder=2,
-               edgecolor="none",
-            )
-
-    # big donor-summary dots, beeswarm-packed so donors at the same value stay visible
-    sns.swarmplot(
-        data=donor_means, x="Condition", y="donor_value",
-        order=CONDITIONS, hue="Donor", hue_order=donors, palette=palette,
-        size=DONOR_MARKER_DIAM, edgecolor="black", linewidth=LINE_WIDTH,
-        ax=ax, legend=False, zorder=4,
-    )
-
-    # black mean +/- SEM bars (of the donor summary values)
-    for _, r in grand.iterrows():
-        xc = x_pos[r["Condition"]]
-        ax.plot([xc - 0.2, xc + 0.2], [r["mean"], r["mean"]], color="black",
-                lw=LINE_WIDTH, zorder=5)
-        ax.errorbar(xc, r["mean"], yerr=r["sem"], color="black", capsize=5,
-                    lw=LINE_WIDTH, capthick=LINE_WIDTH, zorder=5)
-
-    # paired t-test annotation
-    _, pval, n = paired_ttest(donor_means)
-    lo, hi = data[metric].min(), data[metric].max()
-    span = (hi - lo) or 1.0
-    y_top = hi
-    if not np.isnan(pval):
-        y_bar = hi + span * 0.06
-        ax.plot([0, 1], [y_bar, y_bar], color="black", lw=LINE_WIDTH)
-        ax.text(0.5, y_bar + span * 0.02, f"P = {pval:.3f}", ha="center", va="bottom")
-        y_top = y_bar + span * 0.12
-
-    # swarmplot resets the axes data limits to its own points (the donor summaries), which
-    # drops every per-cell dot outside that range off the plot -- so set the range by hand.
-    ax.set_ylim(lo - span * 0.05, y_top)
-
-    # legend (donor colors), outside plot to the right
-    handles = [
-        plt.Line2D([0], [0], marker="o", color="w", markerfacecolor=palette[d],
-                   markersize=DONOR_MARKER_DIAM, label=d)
-        for d in donors
-    ]
-    ax.legend(handles=handles, title="Donor", loc="upper left",
-              bbox_to_anchor=(1.02, 1), borderaxespad=0, frameon=False,
-              handletextpad=0.4, labelspacing=0.4)
-
-    ax.set_xticks(list(x_pos.values()))
-    ax.set_xticklabels(list(x_pos.keys()))
-    ax.set_xlabel("Condition")
-    ax.set_ylabel(f"{metric} per cell")
-    ax.set_title(title)
-    fig.subplots_adjust(**SWARM_RECT)
-    fig.savefig(out_svg)
-    plt.close(fig)
-
-
 def plot_violin(data, metric, out_svg, title):
     """M0 vs LPS violins side-by-side, per donor, with jittered per-cell points."""
     donors = sorted(data["Donor"].unique())
@@ -261,6 +88,10 @@ def plot_violin(data, metric, out_svg, title):
         cut=0,  # a particle count can't go below 0; don't draw KDE tails past the data
         palette={"M0": "#4C72B0", "LPS": "#DD8452"},
     )
+    # stripplot's jitter draws from numpy's *global* RNG, so without this the point
+    # positions differ on every run and the figure isn't reproducible. plot_swarm seeds
+    # its own generator for the same reason.
+    np.random.seed(0)
     sns.stripplot(
         data=data, x="Donor", y=metric, hue="Condition",
         order=donors, hue_order=CONDITIONS,
@@ -282,10 +113,6 @@ def plot_violin(data, metric, out_svg, title):
 # ------------------------------------------------------------------
 # Orchestration
 # ------------------------------------------------------------------
-def slugify(name):
-    return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_")
-
-
 def discover_folders(data_root, requested):
     """Return list of (name, path) folders that contain .xls files."""
     if requested:
@@ -347,8 +174,9 @@ def process_folder(name, path, metric, aggs, outdir):
             print(grand.to_string(index=False))
 
             swarm_svg = os.path.join(outdir, f"{slug}_swarm_{agg}{suffix}.svg")
+            # Two lines, matching the coloc panels, split to keep them close to even.
             plot_swarm(subset, donor_means, grand, metric, swarm_svg,
-                       palette, f"{name} — agg={agg}, {label}")
+                       palette, f"{name} — agg={agg}\n{label}")
             print(f"  saved {swarm_svg}")
 
 
