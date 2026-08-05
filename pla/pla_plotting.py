@@ -62,7 +62,7 @@ CELL_MARKER_ALPHA = 0.3
 # into fewer inches, so a hand-written jitter silently thins the cell clouds every time the
 # tick gap is retuned -- and the same for the mean+/-SEM bar. Deriving them keeps the panel
 # looking identical apart from the one dimension being changed.
-CONDITION_TICK_GAP_IN = 0.39  # M0 to LPS, centre to centre
+CONDITION_TICK_GAP_IN = 0.42  # M0 to LPS, centre to centre
 CELL_CLOUD_WIDTH_IN = 0.135   # full width of one condition's jittered cell cloud
 MEAN_BAR_WIDTH_IN = 0.18      # full width of the mean +/- SEM bar
 
