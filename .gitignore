@@ -53,3 +53,4 @@ whole_proteome/genes_ncbi_9606_proteincoding.py
 !whole_proteome/protein_lists/group_annotations.csv
 !rna/macrophage_database.gmt
 !rna/mart_export.txt
+!src/data_deposition/sample_manifest.tsv

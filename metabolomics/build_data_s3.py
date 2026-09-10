@@ -33,6 +33,25 @@ ANNOTATION_CSV = (
 OUTPUT_XLSX = REPO_ROOT / "Data S3.xlsx"
 ID_COL = "Compound"
 
+# The annotation CSV's super-pathway header is missing its closing paren; the sheet ships the
+# closed form.
+SUPER_PATHWAY_SRC = "Super Pathway (MSK metabolomics Core dMRM method"
+SUPER_PATHWAY = f"{SUPER_PATHWAY_SRC})"
+
+# Annotation values are padded with trailing spaces and non-breaking spaces, which splits a
+# class into two look-alike strings for anyone filtering or pivoting the shipped sheet.
+PAD_CHARS = " \t\xa0"
+
+# Uncurated spellings of super-pathways that are otherwise consistent.
+# metabolomics_visualization.Rmd folds exactly these before plotting; blank stays blank, since
+# the Rmd's "Other" bucket is a plot-legend convenience rather than an annotation.
+SUPER_PATHWAY_FIXES = {
+    "Amino Acid?": "Amino Acid",
+    "Nucleotide?": "Nucleotide",
+    "Lipid?": "Lipid",
+    "Lipids": "Lipid",
+}
+
 # Annotation columns (order) from the annotation CSV, joined Compound == NAME (NAME dropped).
 ANNOTATION_COLS = [
     "HMDB",
@@ -40,19 +59,29 @@ ANNOTATION_COLS = [
     "Alias",
     "Pathway",
     "Metabolite Class (Vardhana lab)",
-    "Super Pathway (MSK metabolomics Core dMRM method",
+    SUPER_PATHWAY,
     "Chemical Taxonomy, Super Class (HMDB)",
     "Chemical Taxonomy, Sub Class (HMDB)",
 ]
 # Lead identifiers: Compound + 4 database IDs up front (rest of annotation follows).
 LEAD_COLS = [ID_COL, "HMDB", "KEGG", "Alias"]
 
+# Spelling variants, as data name -> annotation NAME. Deoxyguanosine, dUMP and Oxalacetic acid
+# are absent from the panel altogether and keep null annotation fields; `build_metabolomics`
+# prints whatever is left unannotated so a changed panel doesn't pass silently.
+COMPOUND_ALIASES = {
+    "Indole-3-propionic acid": "3-Indolepropionic acid",
+    "myo-Inositol": "Myoinositol",
+}
+
 # Per-sample value blocks (channel-ratio + raw signal), tagged with these suffixes.
 NORMALIZED_SUFFIX = "_cell-volume-normalized-QRILC-imputation"
 RAW_SUFFIX = "_raw-signal-intensity"
 
 # The single comparison and its volcano metrics (the "index_*" helper column is dropped).
-COMPARISON = "LPS vs M0"
+# The stimulus is named "TLR4", matching the stat columns of Data S1 and S2; the per-sample
+# columns keep the LPS_* names the assay used.
+COMPARISON = "TLR4 vs M0"
 STAT_METRICS = ["log2_FC", "p_value", "-log10_pval", "-log10_pval_adj", "Regulation"]
 
 SHEET_NAME = "S3-1 Polar metabolites"
@@ -61,10 +90,10 @@ TITLE = (
     "(related to Figure 4 and Extended Data Fig. 3)"
 )
 DESCRIPTION = (
-    "Polar metabolite abundance values in macrophages stimulated with TLR/STING agonists compared "
-    "to M0 macrophages as determined by LC-MS/MS analysis. The channel ratio values after quantile "
-    "regression imputation of left censored data (QRILC) are shown alongside raw signal intensity "
-    "values and differential expression calculations. Data are from n = 4 donors."
+    "Polar metabolite abundance values in macrophages stimulated with the TLR4 agonist LPS "
+    "compared to M0 macrophages as determined by LC-MS/MS analysis. The channel ratio values "
+    "after quantile regression imputation of left censored data (QRILC) are shown alongside raw "
+    "signal intensity values and differential abundance calculations. Data are from n = 4 donors."
 )
 
 
@@ -95,9 +124,27 @@ def load_stats():
 
 
 def load_annotation():
-    """Metabolite annotations keyed by Compound (annotation ``NAME`` -> ``Compound``)."""
+    """Metabolite annotations keyed by Compound (annotation ``NAME`` -> ``Compound``).
+
+    ``COMPOUND_ALIASES`` is applied to the annotation's names, not the spine's, so the sheet
+    reports each metabolite under the name the analysis used.
+    """
     df = pd.read_csv(require(ANNOTATION_CSV))
-    df = df.rename(columns={"NAME": ID_COL})
+    df = df.rename(columns={"NAME": ID_COL, SUPER_PATHWAY_SRC: SUPER_PATHWAY})
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].str.strip(PAD_CHARS)
+    df[SUPER_PATHWAY] = df[SUPER_PATHWAY].replace(SUPER_PATHWAY_FIXES)
+
+    # A mapping that matched nothing would quietly reintroduce the blank rows it exists to fill.
+    names = set(df[ID_COL])
+    for data_name, annotation_name in COMPOUND_ALIASES.items():
+        if annotation_name not in names:
+            sys.exit(f"ERROR: annotation table has no '{annotation_name}' to alias")
+        if data_name in names:
+            sys.exit(f"ERROR: aliasing '{annotation_name}' would collide with '{data_name}'")
+    df[ID_COL] = df[ID_COL].replace({v: k for k, v in COMPOUND_ALIASES.items()})
+
     return df[[ID_COL, *ANNOTATION_COLS]].drop_duplicates(subset=ID_COL, keep="first")
 
 
@@ -126,6 +173,11 @@ def build_metabolomics():
     stat_cols = [f"{COMPARISON} {m}" for m in STAT_METRICS]
     trailing_annotation = [c for c in ANNOTATION_COLS if c not in LEAD_COLS]
     column_order = LEAD_COLS + trailing_annotation + normalized_cols + raw_cols + stat_cols
+
+    unannotated = merged.loc[merged[ANNOTATION_COLS].isna().all(axis=1), ID_COL].tolist()
+    if unannotated:
+        print(f"  no annotation for {len(unannotated)}: {', '.join(unannotated)}")
+
     return merged[column_order]
 
 
