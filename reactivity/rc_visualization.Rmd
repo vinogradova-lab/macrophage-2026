@@ -2158,7 +2158,10 @@ ggsave(file.path(go_out_dir, "go_enrichment.pdf"), width = 230/72, height = 144/
 Complements the GO-term venn diagrams in reactivity_polars.ipynb (which show raw overlap of a
 term's genes with each omic's changes): here we test whether each term is statistically enriched
 among each omic's full set of significant changes, via go_enrich() (Fisher-exact over MSigDB C5 GO).
-Term gene sets therefore come from msigdbr, not the venn GMT/query lists, so counts differ slightly.
+The three change sets are the same ones the venns use (src/cross_omics.py OMIC_SOURCES), so
+n_proteins reproduces the venn circle counts. The one remaining caveat is the term universe:
+enricher() caps set size at maxGSSize, so vesicle-mediated transport is BH-adjusted over a
+different universe than the 500-cap terms, and endocytosis is untestable at either cap.
 
 ```{r}
 prefix <- "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/Macrophage project/Manuscript 1/01_Data Analysis/01_Proteomics/"
@@ -2171,12 +2174,14 @@ omic_changes <- list(
   "Reactivity (TLR4)" = read_csv(paste0(prefix, "02_reactivity/03_rc_analysis/reactivity_output/20251023_ratio_directionality/median_for_5+_peptides/output/reactivity_changes_long_format.csv"),
                           col_select = c(protein, condition, reactivity_change), show_col_types = FALSE) |>
     filter(reactivity_change, condition == "TLR4") |> pull(protein) |> unique(),
-  # Upregulated-only, matching the panel F "phosphosites up in TLR4" set in
-  # phosphoproteomics/visualization.Rmd (log2FC > 1 & p < 0.05, unique proteins).
+  # Both directions, like the other two omics: the venn's blue circle and the volcanoes in panels
+  # 5e/5i show up- and down-phosphorylated proteins, so the enrichment tests the same set. (An
+  # earlier version filtered log2FC > 1 & p < 0.05, i.e. up-only, which is why the phospho circle
+  # summed to 129 where Data S2-4 reported 90. The up/down split lives in its own GO:BP enrichment
+  # in phosphoproteomics/visualization.Rmd -- Figure 3g and Extended Data Fig. 5d.)
   "Phospho (TLR4)" = read_csv(paste0(prefix, "05_phosphoproteomics/processed_results/expression-normalized_phosphorylation_table.csv"),
-                              col_select = c(protein, `log2_FC_phospho - TLR4 vs. M0 (9591 Residues)`, `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)`), show_col_types = FALSE) |>
-    filter(`log2_FC_phospho - TLR4 vs. M0 (9591 Residues)` > 1,
-           `-log10_pval_phospho - TLR4 vs. M0 (9591 Residues)` > -log10(0.05)) |> pull(protein) |> unique(),
+                              col_select = c(protein, `Regulation_phospho - TLR4 vs. M0 (9591 Residues)`), show_col_types = FALSE) |>
+    filter(`Regulation_phospho - TLR4 vs. M0 (9591 Residues)` %in% dirs) |> pull(protein) |> unique(),
   "Expression (TLR4)" = read_csv(paste0(prefix, "01_unenriched proteomics/03_results/20250219_3reps/04_results/volcano_plots/volcano_data_long_format.csv"),
                                  col_select = c(protein, condition, Regulation), show_col_types = FALSE) |>
     filter(condition == "TLR4", Regulation %in% dirs) |> pull(protein) |> unique()
@@ -2284,8 +2289,10 @@ res |>
   geom_vline(xintercept = -log10(0.01), linetype = "dashed", size = LINE_WIDTH) + 
   my_theme() +
   theme(strip.background = element_blank(), strip.clip = "off") + 
-  labs(x = expression("-log"[10] * "(FDR)"), y = NULL, size = "proteins") + 
-  scale_size_continuous(range = c(1, 3), breaks = c(20, 25,30, 35)) + 
+  labs(x = expression("-log"[10] * "(FDR)"), y = NULL, size = "proteins") +
+  # Breaks span the panel's actual range (13-45); the old 20-35 breaks left both larger
+  # bubbles above the top legend key.
+  scale_size_continuous(range = c(1, 3), breaks = c(20, 30, 40)) +
   scale_x_continuous(expand = expansion(mult = c(0.2,0.2)))
 
 ggsave(
