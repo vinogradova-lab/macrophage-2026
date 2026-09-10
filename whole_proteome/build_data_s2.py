@@ -12,6 +12,9 @@
   S2-6 Phosphoproteomics      per phosphosite: expression-normalized per-replicate ratios,
                               TLR4-vs-M0 stats, and UniProt function.
   S2-7 Immunoprecipitation MS the two FERRY-subunit IP-MS pulldowns merged on uniprot.
+  S2-8 Cross-omics Venn        per protein: which of the three TLR4 change sets it belongs to,
+                              for each GO term with a Venn panel. The per-protein backing data
+                              for the counts S2-4 reports as enrichment.
 
 Run after wp_downstream_analysis.ipynb has generated the volcano/wp_vs_rnaseq/GSEA tables and
 the three visualization .Rmd files have written their go_enrich() CSVs (see the S2-4 loaders).
@@ -55,6 +58,12 @@ from src.reactivity import (  # noqa: E402
     load_rc_long,
     pivot_rc_wide,
     rc_change_positions,
+)
+from src.cross_omics import (  # noqa: E402
+    OMIC_NAMES,
+    VENN_TERMS,
+    protein_annotation,
+    venn_membership,
 )
 from src.supp_data import SuppSheet, write_supplementary_workbook  # noqa: E402
 
@@ -186,8 +195,12 @@ GO_BG_WP_DETECTED = "Per-comparison detected proteome"
 
 # The panel each term is plotted in, per "Relevant figure". Most analyses map to one panel (a
 # scalar passed to _tag_go); the two below vary per row. Every row must land on a panel --
-# build_go_enrichment() enforces it -- so CROSS_OMICS_FIGURES doubles as that block's whitelist:
-# its GTPase activity terms are enriched but not shown in the manuscript.
+# build_go_enrichment() enforces it -- so CROSS_OMICS_FIGURES doubles as that block's whitelist.
+#
+# GTPase activity is deliberately absent: there is no GTPase cross-omics enrichment panel (5f and
+# 5k are the only two), and the GTPase Venn in 5h is built on a union of GTPase GO terms rather
+# than GO:0003924, so listing that term's enrichment here would put n_proteins = 57 next to a
+# circle of 126. Panel 5h is documented by sheet S2-8 instead.
 PHOSPHO_BP_FIGURES = {"Upregulated": "Figure 3g", "Downregulated": "Extended Data Fig. 5d"}
 CROSS_OMICS_FIGURES = {
     "Endosomal transport": "Extended Data Fig. 5f",
@@ -218,9 +231,39 @@ GO_TITLE = (
 )
 GO_DESCRIPTION = (
     "Fisher's exact test and the 2026 MSigDB gene sets were used for all analyses, and the "
-    "background for each test is specified in the table. Only significant terms are shown. "
-    "'Relevant figure' gives the panel in which each term is plotted."
+    "background for each test is specified in the table. Only terms reaching significance "
+    "(FDR < 0.05 and more than 5 proteins, except where a panel's own cutoff is stricter) are "
+    "listed, so a panel may plot a non-significant point that has no row here. 'Relevant figure' "
+    "gives the panel in which each term is plotted. Protein counts for the Cross-omics rows are "
+    "the same change sets the Venn diagrams use; see sheet S2-8 for their per-protein membership."
 )
+
+# --- S2-8: per-protein membership behind the cross-omics Venn diagrams --------------------
+# Built from src.cross_omics, the same module reactivity_polars.ipynb draws the Venns with, so
+# the column sums here are the circle counts in the panels by construction.
+# Excel caps sheet names at 31 characters, hence the short form; VENN_TITLE spells it out.
+VENN_SHEET_NAME = "S2-8 Cross-omics Venn"
+VENN_TITLE = (
+    "Per-protein membership behind the cross-omics GO-term Venn diagrams "
+    "(related to Extended Data Fig. 5)"
+)
+VENN_DESCRIPTION = (
+    "One row per protein in the union of the three TLR4-vs-M0 change sets for each GO term, with "
+    "a 1/0 flag per profiling method. Unlike sheet S2-4 these are raw overlaps of the term's gene "
+    "list with each method's significant changes, not an enrichment test, so no p-values apply; "
+    "summing a flag column gives that method's circle total in the panel. 'GO term source' gives "
+    "the gene set used, which for GTPase activity is a union of GTPase GO terms rather than "
+    "GO:0003924 alone."
+)
+VENN_ID_COLS = [
+    "Term",
+    "GO term source",
+    "Relevant figure",
+    "uniprot",
+    "protein",
+    "description",
+    "uniprot_function",
+]
 
 # --- S2-3: GSEA of the WP PCA loadings ----------------------------------------------------
 # One gseapy.prerank report per PC, written by wp_downstream_analysis.ipynb
@@ -636,6 +679,28 @@ def build_go_enrichment():
     return out
 
 
+def build_venn_membership():
+    """S2-8: per-protein membership behind the cross-omics Venn diagrams, one term per block.
+
+    Only the terms with a panel are included -- VENN_TERMS also carries Endocytosis, which the
+    notebook draws for context but the manuscript does not show. Summing an omic column within a
+    Term reproduces that circle's count in the panel, because both come from the same
+    src.cross_omics change sets.
+    """
+    blocks = []
+    for term, spec in VENN_TERMS.items():
+        if spec["figure"] is None:
+            continue
+        block = venn_membership(term).to_pandas()
+        block.insert(0, "Relevant figure", spec["figure"])
+        block.insert(0, "GO term source", spec["source"])
+        block.insert(0, "Term", term)
+        blocks.append(block)
+    out = pd.concat(blocks, ignore_index=True)
+    out = out.merge(protein_annotation().to_pandas(), on="protein", how="left")
+    return out[VENN_ID_COLS + OMIC_NAMES]
+
+
 def build_pc_gsea():
     """S2-3: significant pre-ranked GSEA hits for each PCA loading vector, one flat table.
 
@@ -695,6 +760,9 @@ def main():
             6, PHOSPHO_SHEET_NAME, PHOSPHO_TITLE, PHOSPHO_DESCRIPTION, build_phospho()
         ),
         SuppSheet(7, IPMS_SHEET_NAME, IPMS_TITLE, IPMS_DESCRIPTION, build_ipms()),
+        SuppSheet(
+            8, VENN_SHEET_NAME, VENN_TITLE, VENN_DESCRIPTION, build_venn_membership()
+        ),
     ]
     write_supplementary_workbook(OUTPUT_XLSX, sheets)
     print(f"Wrote {OUTPUT_XLSX}")
