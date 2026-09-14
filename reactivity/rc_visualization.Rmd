@@ -1933,6 +1933,38 @@ cols <- c(
   "STING" = "#742D16"
 )
 
+# Fill per stratum, named rather than recycled positionally: `cols` cycles 1-8 across the axes in
+# order, which lands the pathogenicity axis on light blue / green / brown. The published panel
+# gives that axis the semantic grey / blue / red instead, and naming each stratum also stops the
+# whole figure recolouring if a stratum ever disappears from the data.
+STRATUM_FILL <- c(
+  "Complex" = "TLR1-2", "Not complex" = "M0",
+  "Accessible" = "TLR3", "Buried" = "TLR4", "Intermediate" = "TLR7",
+  "BEND" = "TLR8", "HELX" = "TLR9", "STRN" = "STING",
+  "TURN" = "TLR1-2", "Unstructured" = "M0",
+  "1-10" = "TLR3", "11-50" = "TLR4", "51+" = "TLR7",
+  "Ambiguous" = "M0", "Benign" = "TLR7", "Pathogenic" = "TLR1-2"
+)
+STRATUM_FILL <- setNames(
+  lighten(unname(cols[STRATUM_FILL]), amount = 0.25), names(STRATUM_FILL)
+)
+
+# Stratum labels read "Name (n)", with the count dropped onto a second line when the one-line
+# form would overrun the stratum box. Thin strata stay on one line -- they have no room for a
+# second, and a label that overhangs its box sideways reads better than one that overhangs it
+# vertically into the neighbouring stratum.
+LABEL_MAX_CHARS <- 13   # roughly what fits across a stratum at 5.5 pt Arial
+LABEL_MIN_HEIGHT <- 0.09  # fraction of the axis a stratum needs to hold two lines
+
+stratum_label <- function(stratum, count, total) {
+  one_line <- paste0(stratum, " (", count, ")")
+  ifelse(
+    nchar(one_line) > LABEL_MAX_CHARS & count / total >= LABEL_MIN_HEIGHT,
+    paste0(stratum, "\n(", count, ")"),
+    one_line
+  )
+}
+
 # Create alluvial plot
 create_alluvial <- function(df, columns) {
   
@@ -1940,6 +1972,9 @@ create_alluvial <- function(df, columns) {
   flow_data <- df %>%
     group_by(across(all_of(columns))) %>%
     summarise(n = n(), .groups = "drop")
+  
+  # Every row appears once on every axis, so this is each axis's total.
+  total <- sum(flow_data$n)
   
   
   # Create the plot
@@ -1960,8 +1995,9 @@ create_alluvial <- function(df, columns) {
                  color = "black",
                  linewidth = 0.25 / 2) +
     geom_text(stat = "stratum", 
-              aes(label = paste(after_stat(stratum), after_stat(count))),
+              aes(label = stratum_label(after_stat(stratum), after_stat(count), total)),
               size = 5.5 / .pt,  # Convert pt to mm for ggplot
+              lineheight = 0.9,
               family = "Arial") +
     theme_minimal() +
     theme(
@@ -1970,14 +2006,18 @@ create_alluvial <- function(df, columns) {
       axis.title = element_blank(),
       panel.grid = element_blank(),
       legend.position = "none"
-    ) +scale_fill_manual(values = rep(lighten(unname(cols), amount = 0.25), 12))
+    ) + scale_fill_manual(values = STRATUM_FILL)
   
   return(p)
 }
 
 flags <- c("reactive" = TRUE, "unreactive" = FALSE)
 # Load  data
-df <- read_csv("/Users/henrysanford/Downloads/formatted_cross_ref.csv")
+# Written by reactivity_polars.ipynb cell 39, relative to this Rmd. src/cross_ref.py's labels are
+# lower case ("accessible", "unstructured"); the panel capitalises them. Only the first letter, so
+# the structure_group acronyms (BEND, HELX, STRN, TURN) survive intact.
+df <- read_csv("formatted_cross_ref.csv") %>%
+  mutate(across(c("pPSE", "structure_group"), ~ sub("^(.)", "\\U\\1", .x, perl = TRUE)))
   
 columns_to_plot <- c(
   "Complex",

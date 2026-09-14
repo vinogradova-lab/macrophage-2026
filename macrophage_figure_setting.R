@@ -425,6 +425,14 @@ replot_pca <- function(pca_dir, x, y, arrow_scaling, add_grid = FALSE){
 #   rasterize_points - rasterize only the point layers (keeps SVGs light for dense phospho data).
 #   x_axis_word      - noun in the x-axis label ("expression" vs "pulldown").
 #   y_max / x_max    - optional axis-limit overrides; computed from the data when NULL.
+#   label_all_highlights - label every highlight_proteins hit, significant or not, placing
+#                      the label on the side its log2_FC falls on (default FALSE keeps the
+#                      original behaviour of labelling only significant hits).
+#   label_seed       - RNG seed handed to ggrepel; change it to shuffle a label layout
+#                      that happens to collide.
+#   label_box_padding - ggrepel box.padding for the margin labels; lower it when a panel
+#                      carries more labels than the default spacing can fit.
+#   show_counts      - draw the per-group significant-count boxes in the panel corners.
 make_condition_plot_multi <- function(condition,
                                       volcano_data,
                                       control_condition,
@@ -436,7 +444,11 @@ make_condition_plot_multi <- function(condition,
                                       rasterize_points   = FALSE,
                                       x_axis_word        = "expression",
                                       y_max              = NULL,
-                                      x_max              = NULL){
+                                      x_max              = NULL,
+                                      label_all_highlights = FALSE,
+                                      label_seed         = 12345,
+                                      label_box_padding  = 1,
+                                      show_counts        = TRUE){
 
   if (is.null(y_max)){
     y_max <- max(abs(volcano_data$`-log10_pval`)) * 1.2
@@ -482,9 +494,26 @@ make_condition_plot_multi <- function(condition,
 
   volcano_data %>% mutate(significant = .data[[id_var]] %in% sig[[id_var]]) -> volcano_data
   sig$significant <- TRUE
-  label_data <- sig[ sig[[name_var]] %in% highlight_proteins , ]
+  if (label_all_highlights){
+    # keep non-significant highlights (e.g. FERRY subunits that don't move) on the plot,
+    # and pick the label side from the fold change rather than the Regulation call;
+    # drawing them through the "significant" layers keeps them opaque and group-coloured
+    volcano_data$significant <- volcano_data$significant |
+      volcano_data[[name_var]] %in% highlight_proteins
+    label_data <- volcano_data[ volcano_data[[name_var]] %in% highlight_proteins , ]
+    label_data$label_side <- ifelse(label_data$log2_FC > 0, "Significant Up", "Significant Down")
+    # non-significant highlights sit in the crowded middle of the plot; labelling them in
+    # place (rather than pushing them out to the margins with the significant hits) keeps
+    # the margin columns readable
+    stable_label_data <- label_data[ label_data[[change_var]] == "Stable" , ]
+    label_data <- label_data[ label_data[[change_var]] != "Stable" , ]
+  } else {
+    label_data <- sig[ sig[[name_var]] %in% highlight_proteins , ]
+    label_data$label_side <- label_data[[change_var]]
+    stable_label_data <- label_data[0, ]
+  }
 
-  set.seed(12345)
+  set.seed(label_seed)
   volcano_data$group <- factor(volcano_data$group, levels = rev(names(color_code)))
   volcano_data %>%
     arrange(group) %>%
@@ -528,7 +557,7 @@ make_condition_plot_multi <- function(condition,
     geom_hline(yintercept = -log10(0.05), linetype = "dashed", size=LINE_WIDTH) +
     geom_vline(xintercept = c(-fc_cutoff, fc_cutoff), linetype = "dashed", size=LINE_WIDTH) +
     geom_text_repel(
-      data = label_data[label_data[[change_var]] == "Significant Down",],
+      data = label_data[label_data$label_side == "Significant Down",],
       aes(
         x = log2_FC,
         y = `-log10_pval`,
@@ -536,7 +565,7 @@ make_condition_plot_multi <- function(condition,
       # label with gene name instead of uniprot
       label = protein),
       direction    = "both",
-      box.padding = 1,
+      box.padding = label_box_padding,
       nudge_x = -nudge_x,
       xlim = c(NA, -1),
       size =FONT_SIZE_MM,
@@ -546,7 +575,7 @@ make_condition_plot_multi <- function(condition,
       inherit.aes = FALSE,
       show.legend = FALSE) +
     geom_text_repel(
-      data = label_data[label_data[[change_var]] == "Significant Up",],
+      data = label_data[label_data$label_side == "Significant Up",],
             aes(
         x = log2_FC,
         y = `-log10_pval`,
@@ -554,7 +583,7 @@ make_condition_plot_multi <- function(condition,
       # label with gene name instead of uniprot
       label = protein),
       direction    = "both",
-      box.padding = 1,
+      box.padding = label_box_padding,
       nudge_x = nudge_x,
       xlim = c(1,NA),
       size = FONT_SIZE_MM,
@@ -563,8 +592,19 @@ make_condition_plot_multi <- function(condition,
       segment.size = LINE_WIDTH,
       inherit.aes = FALSE,
       show.legend = FALSE) +
+    geom_text_repel(
+      data = stable_label_data,
+      aes(x = log2_FC, y = `-log10_pval`, color = group, label = protein),
+      direction    = "both",
+      box.padding = 0.4,
+      point.padding = 0.15,
+      size = FONT_SIZE_MM,
+      min.segment.length = 0,
+      segment.size = LINE_WIDTH,
+      inherit.aes = FALSE,
+      show.legend = FALSE) +
   geom_label(
-    data = count_label_df,
+    data = if (show_counts) count_label_df else count_label_df[0, ],
     mapping = aes(x = as.numeric(x),
                   y = as.numeric(y),
                   label = count,

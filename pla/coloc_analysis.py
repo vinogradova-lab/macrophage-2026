@@ -1,10 +1,40 @@
 #!/usr/bin/env python3
 """Superplots for the collaborator per-cell colocalization data.
 
-Reads the six per-cell CSVs (three antibody pairs x M0/LPS), and for each pair renders
-both directions of the split colocalization coefficient as an M0-vs-LPS superplot: every
-small dot a cell, every large dot a donor mean/median, p from a paired t-test across the
-three donors.
+Reads the per-cell CSVs (three antibody pairs x M0/LPS) from one or more deliveries, and
+for each pair renders both directions of the split colocalization coefficient as an
+M0-vs-LPS superplot: every small dot a cell, every large dot a donor mean/median, p from a
+paired t-test across donors.
+
+Two deliveries, two layouts
+---------------------------
+Donors arrive in batches (`--data-root`, repeatable) and are pooled into one figure: D1-D3
+from `20260729_Yannis_D1-D3` and D4-D6 from `20260910_chromaticabberation` give the n=6 run.
+
+D4-D6 is read from that 20260910 re-export rather than from the original
+`20260908_yannis_D4-D6` delivery. The re-export re-runs the same cells with the chromatic
+aberration of the Fy2 channel corrected: every Fy2-side count, size and intensity moves and
+with it every coloc coefficient (by up to 0.29 on Fy2/Fy1), while the first marker's columns
+come back byte-identical. It also restores the `Masked Area (Physical Units)` column that
+the 20260908 export had dropped, which is what lets the density QC and the size-normalized
+vesicle count reach all six donors. Note that only D4-D6 has been re-exported this way; the
+D1-D3 tables are as delivered.
+
+The exporter changed its metadata layout between the two deliveries and nothing in a file
+announces which one it wrote, so `load_csv` sniffs it -- see DONOR_IN_FILENAME_RE. The
+differences that matter here:
+
+    D1-D3   GeneName = condition, siRNA_ID = donor (a within-batch 1/2/3).
+    D4-D6   siRNA_ID = condition, GeneName = the marker pair, and no donor column at all --
+            the donor is FileName's `bd26-NN` prefix.
+
+Both now carry `Masked Area (Physical Units)`, the per-cell size measure that the density QC
+and the normalized vesicle count both divide by. See CELL_SIZE_COL for why that column, and
+not the `Mean: Volume[Total] : Cells3D` volume, is the one comparable across deliveries.
+
+Donor ids are not comparable across deliveries -- D1-D3 numbers its donors 1/2/3 -- so
+`load_pair` prefixes them with the batch and `assign_donor_labels` renumbers the union to
+D1..Dn once for the whole run. `donor_key.csv` maps those back to the acquisition ids.
 
 The two directions are not redundant. Coloc(X/Y) is the fraction of the X signal sitting
 on Y ("how much of X is Y-positive"); Coloc(Y/X) is the reverse. They differ whenever the
@@ -24,8 +54,9 @@ a confound the superplots cannot show. Two per-cell quantities are correlated (S
 Y rather than X because the confound is directional: the denser the Y objects, the more
 likely any X object overlaps one, so Coloc(X/Y) drifts up with density(Y) on chance-overlap
 grounds alone. `SubRand=TRUE` is supposed to remove exactly that, and empirically does not
-fully -- rho reaches ~+0.6 to +0.7 in some donor x condition strata for the Fy1 and Fy4
-pairs. Because density also varies by donor and by condition, some of the M0/LPS coloc
+fully -- pooled within condition, rho reaches +0.76 for Fy4/Fy2 and +0.56 for Fy1/Fy2, and
+the 72 donor x condition strata run from -0.24 to +0.91. Because density also varies by
+donor and by condition, some of the M0/LPS coloc
 difference may be segmentation rather than biology. `density_qc()` quantifies this at four
 pooling scopes (see its docstring for the pooled-vs-per-donor trade-off) into
 `coloc_density_qc.csv`, and `density_scatter()` renders it per direction.
@@ -33,10 +64,10 @@ pooling scopes (see its docstring for the pooled-vs-per-donor trade-off) into
 Vesicle abundance and size
 --------------------------
 The same superplot treatment is also applied to the per-cell vesicle metrics of each
-pair's non-Fy2 marker -- raw count, count normalized to cell volume, and mean vesicle
-size (see `vesicle_specs`). The normalized count needs a cell volume, which the analysis
-tables do not carry; it comes from the companion `-per-cell.csv` export, joined per cell
-in `load_pair`. Only rab5 has that companion file, so only rab5 gets all three panels.
+pair's non-Fy2 marker -- raw count, count normalized to cell size, and mean vesicle size
+(see `vesicle_specs`). The normalized count divides by CELL_SIZE_COL, read inline from the
+analysis table of every delivery. A pair whose donors are not *all* covered loses the
+normalized panel rather than drawing it at a reduced n -- see `process_vesicle_metrics`.
 
 Output layout
 -------------
@@ -51,10 +82,15 @@ Output layout
     density_confound_qc/        the coloc-vs-density scatters + coloc_density_qc.csv
     vesicle_abundance_and_size/ the vesicle count/size superplots + vesicle_stats.csv
 
+Colocalization panels are named by direction -- `coloc_Fy1-to-Fy2_intensity_mean.svg` is
+Coloc(Fy1/Fy2), the fraction of the Fy1 signal sitting on Fy2, and is a different quantity
+from its `Fy2-to-Fy1` counterpart.
+
 Usage:
-    python coloc_analysis.py                        # intensity metric + vesicle metrics
+    python coloc_analysis.py --outdir plots_n6      # the n=6 run
     python coloc_analysis.py --metric both          # also the number-based coefficient
     python coloc_analysis.py --no-vesicle-metrics   # coloc superplots only
+    python coloc_analysis.py --data-root DIR --data-root DIR2    # pick the deliveries
 """
 
 import argparse
@@ -77,10 +113,25 @@ from pla_plotting import (
     summarize_donors,
 )
 
-DEFAULT_DATA_ROOT = (
+_IF_ROOT = (
     "/Users/henrysanford/Dropbox @RU Dropbox/Vinogradova Laboratory/"
-    "Macrophage project/Manuscript 1/01_Data Analysis/08_IF/if_collaborator_data"
+    "Macrophage project/Manuscript 1/01_Data Analysis/08_IF"
 )
+
+# The two donor batches of the n=6 run, each the 0.15-um size-gated analysis tables.
+#
+# D4-D6 is taken from the 20260910 chromatic-aberration re-export, not from the 20260908
+# original. Preferring the corrected coloc coefficients is the obvious reason; the reason it
+# is *required* here is that the 20260908 export dropped `Masked Area (Physical Units)` and
+# the 20260910 one restores it -- see CELL_SIZE_COL.
+#
+# D1-D3's ungated `no filter/` companions used to be a third root, as the only place a cell
+# volume could be found for those donors. Nothing reads that volume any more, so they are
+# not listed; `batch_label` still recognizes the folder for anyone who passes it explicitly.
+DEFAULT_DATA_ROOTS = [
+    os.path.join(_IF_ROOT, "20260729_Yannis_D1-D3", "0.15-filter"),
+    os.path.join(_IF_ROOT, "20260910_chromaticabberation", "0.15 filter"),
+]
 
 # Non-numeric columns, exempt from the numeric coercion below.
 META_COLS = ("FileName", "GeneName", "siRNA_ID", "Extension", "FullName")
@@ -97,14 +148,34 @@ METRIC_TOKENS = {"intensity": "by InegrIntense", "number": "by Number"}
 #   " Coloc. (Rab5/Fy2)Thesh=0.25 SubRand=TRUE by InegrIntense"
 COLOC_RE = re.compile(r"Coloc\. \((\w+)/(\w+)\)")
 
-# The export ships two kinds of file per pair x condition, distinguished by a single
-# hyphen. Read the suffixes carefully:
-#   *-percell.csv    the size-gated analysis table -- one row per cell, carrying the coloc
-#                    coefficients, the vesicle counts and the vesicle sizes.
-#   *-per-cell.csv   the ungated companion -- seven rows per cell (a `total` row plus one
-#                    per vesicle-size stratum), and the only file carrying cell volume.
-# Only rab5 has a companion file; fy1 and fy4 were delivered as analysis tables alone.
-VOLUME_SUFFIX = "-per-cell.csv"
+# The exporter changed its metadata layout between the two deliveries, and nothing in a
+# file announces which layout it uses:
+#
+#   D1-D3   GeneName = condition (M0/LPS),  siRNA_ID = donor (1/2/3)
+#   D4-D6   siRNA_ID = condition (M0/LPS),  GeneName = the marker pair ("Fy1_Fy2"), and
+#           there is no donor column at all -- the donor is the `bd26-NN` prefix of FileName
+#
+# Read the D1-D3 way, a D4-D6 file yields a Condition of "Fy1_Fy2" that casts to all-NaN
+# and a "Donor" of M0/LPS, so `load_csv` sniffs the layout rather than assuming one.
+DONOR_IN_FILENAME_RE = re.compile(r"(bd26-\d+)", re.IGNORECASE)
+
+# The collaborator's own name for a donor, as it appears in FileName: either a `bd26-NN`
+# bleed code or an 8-digit acquisition date. Recorded alongside the D-numbers in
+# donor_key.csv purely for traceability -- D1-D3's `siRNA_ID` is a within-batch 1/2/3 that
+# means nothing outside its own delivery, so it is not enough to identify a donor.
+SOURCE_ID_RE = re.compile(r"(bd26-\d+|\d{8})", re.IGNORECASE)
+
+# `fy42nd-fy2` (D1-D3) and `fy4-fy2` (D4-D6) are the same antibody pair -- both carry
+# `Coloc. (Fy4/Fy2)` columns. Without this they discover as two 3-donor pairs, and the n=6
+# run quietly becomes two n=3 runs.
+PAIR_ALIASES = {"fy42nd": "fy4"}
+
+# Leaf folders that name the vesicle size gate rather than a delivery. Three spellings are
+# in use across the deliveries -- `0.15-filter` (D1-D3, D4-D6), `0.15 filter` and
+# `no filter` (the 20260910 chromatic-aberration re-export, and D1-D3's companions) -- and
+# `batch_label` has to recognize all of them, or two roots of the same delivery come out
+# under different batch names and their donors stop lining up.
+GATE_DIR_RE = re.compile(r"(?:[\d.]+|no)[ _-]?filter", re.IGNORECASE)
 
 # Re-downloaded copies land beside the originals as `...percell[18].csv`. They are
 # byte-identical (verified by checksum), so letting them through would silently double
@@ -121,14 +192,23 @@ PERCENT_CONTROL_DIR = "colocalization_percent_control"
 DENSITY_QC_DIR = "density_confound_qc"
 VESICLE_DIR = "vesicle_abundance_and_size"
 
-# Cell volume lives only in the companion file, under this column (its column H).
-CELL_VOLUME_COL = "Mean: Volume[Total] : Cells3D"
-CELL_VOLUME = "Cell volume"
-
-# The companion file repeats each cell once per vesicle-size stratum; `total` is the
-# whole-cell row. Volume is identical across a cell's strata (verified), so selecting one
-# stratum picks a representative row rather than discarding information.
-TOTAL_EXTENSION = "total"
+# The per-cell size measure. Two quantities are normalized by it -- the vesicle density the
+# coloc QC correlates against, and the size-normalized vesicle count -- and both are compared
+# across deliveries, so what matters about this column is not that it is the most physical
+# measure available but that it means the same thing in both.
+#
+# The obvious alternative, `Mean: Volume[Total] : Cells3D`, does not. Take the per-cell ratio
+# of that column to this one and it is 3.639 for every D1-D3 cell (SD 0.039, n=999) and 0.996
+# for every D4-D6 cell (SD 0.020, n=755): D1-D3's "volume" is the masked area times a ~3.6 um
+# cell height, D4-D6's is the masked area itself, un-scaled in z. That is a per-delivery
+# calibration, not a per-cell measurement, so dividing counts by it put the two batches on
+# denominators 3.6x apart and split the count-per-volume panel into a D1-D3 cluster and a
+# D4-D6 cluster with no biology between them. Within D1-D3 the two denominators differ by a
+# constant, so nothing is lost by using this one: the panel is the same figure rescaled.
+#
+# It is an *area*, not a volume, and the panels below say so. The 20260908 D4-D6 export had
+# dropped it, which is why DEFAULT_DATA_ROOTS points at the 20260910 re-export instead.
+CELL_SIZE_COL = "Masked Area (Physical Units)"
 
 
 # ------------------------------------------------------------------
@@ -157,111 +237,135 @@ def load_csv(path):
     def clean(s):
         return s.astype(str).str.strip().str.strip('"').str.strip()
 
-    df["Donor"] = clean(df["siRNA_ID"])
-    df["Condition"] = clean(df["GeneName"])
+    df["SourceID"] = (df["FileName"].astype(str)
+                      .str.extract(SOURCE_ID_RE, expand=False).str.lower())
+
+    gene, sirna = clean(df["GeneName"]), clean(df["siRNA_ID"])
+    conditions = set(CONDITIONS)
+    if set(gene.unique()) <= conditions:            # D1-D3 layout
+        df["Condition"], df["Donor"] = gene, sirna
+    elif set(sirna.unique()) <= conditions:         # D4-D6 layout
+        df["Condition"] = sirna
+        donor = df["FileName"].astype(str).str.extract(DONOR_IN_FILENAME_RE, expand=False)
+        if donor.isna().any():
+            raise SystemExit(
+                f"{os.path.basename(path)} uses the D4-D6 layout, where the donor is the "
+                f"'bd26-NN' prefix of FileName, but {int(donor.isna().sum())} of "
+                f"{len(df)} rows have no such prefix")
+        df["Donor"] = donor.str.lower()
+    else:
+        raise SystemExit(
+            f"{os.path.basename(path)}: cannot tell which column holds the condition. "
+            f"Expected {sorted(conditions)} in either GeneName (got "
+            f"{sorted(gene.unique())[:4]}) or siRNA_ID (got {sorted(sirna.unique())[:4]})")
     return df
 
 
-def discover_pairs(data_root):
-    """Group the CSVs into {pair: {"cells": {cond: path}, "volume": {cond: path}}}.
+def batch_label(root):
+    """A short name for the delivery a root belongs to, used to keep donors distinct.
 
-    Filenames are punctuated inconsistently (`size-gr` vs `size_gr`), so the pair name is
-    taken from the `<pair>-fy2` prefix and the condition from an `_m0`/`_lps` token. Each
-    pair must have both conditions of the analysis table; the `volume` companion is
-    optional and present only for rab5.
+    A leaf like `0.15-filter` or `no filter` names the size gate, not the batch, so for
+    those roots the batch is the parent folder -- otherwise both deliveries would come out
+    labelled "0.15-filter" and their donors would collide.
+
+    Folding `no filter` in as well is what keeps D1-D3's two roots -- the gated analysis
+    tables in `0.15-filter/` and the ungated companions in `no filter/` -- under one batch
+    name. `load_pair` looks a companion up by `(condition, batch)`, so if they disagreed
+    the lookup would return None and every D1-D3 cell would lose its volume with no error
+    anywhere; the volume-normalized vesicle panel would just quietly drop to n=3.
     """
-    paths = sorted(glob.glob(os.path.join(data_root, "*.csv")))
-    if not paths:
-        raise SystemExit(f"No .csv files found in {data_root!r}")
+    root = os.path.normpath(root)
+    base = os.path.basename(root)
+    if GATE_DIR_RE.fullmatch(base):
+        return os.path.basename(os.path.dirname(root))
+    return base
 
+
+def discover_pairs(roots):
+    """Group the CSVs across all `roots` into {pair: {condition: [(path, batch), ...]}}.
+
+    Extends the single-root version to several deliveries at once, which is what makes an
+    n=6 run possible: one batch supplies donors 1-3 and another donors 4-6, and one antibody
+    pair is assembled from both. Filenames are punctuated inconsistently (`size-gr` vs
+    `size_gr`, `fy42nd` vs `fy4`), so the pair name is taken from the `<pair>-fy2` prefix and
+    mapped through PAIR_ALIASES, and the condition from an `_m0`/`_lps` token.
+
+    Each pair must have both conditions, or the M0-vs-LPS panel it feeds is half a
+    comparison drawn as if it were whole.
+    """
     pairs = {}
-    for path in paths:
-        base = os.path.basename(path).lower()
-        if DUPLICATE_RE.search(base):
-            print(f"  Skipping (re-downloaded duplicate): {os.path.basename(path)}")
-            continue
-        m = re.match(r"([a-z0-9]+)-fy2", base)
-        cond = re.search(r"_(m0|lps)[_-]", base)
-        if not (m and cond):
-            print(f"  Skipping (couldn't parse pair/condition): {base}")
-            continue
-        role = "volume" if base.endswith(VOLUME_SUFFIX) else "cells"
-        pairs.setdefault(m.group(1), {}).setdefault(role, {})[cond.group(1).upper()] = path
+    for root in roots:
+        batch = batch_label(root)
+        paths = sorted(glob.glob(os.path.join(root, "*.csv")))
+        if not paths:
+            raise SystemExit(f"No .csv files found in {root!r}")
+        for path in paths:
+            base = os.path.basename(path).lower()
+            if DUPLICATE_RE.search(base):
+                print(f"  Skipping (re-downloaded duplicate): {os.path.basename(path)}")
+                continue
+            m = re.match(r"([a-z0-9]+)-fy2", base)
+            cond = re.search(r"_(m0|lps)[_-]", base)
+            if not (m and cond):
+                print(f"  Skipping (couldn't parse pair/condition): {base}")
+                continue
+            pair = PAIR_ALIASES.get(m.group(1), m.group(1))
+            (pairs.setdefault(pair, {})
+                  .setdefault(cond.group(1).upper(), []).append((path, batch)))
 
-    for pair, files in sorted(pairs.items()):
-        missing = set(CONDITIONS) - set(files.get("cells", {}))
+    for pair, cells in sorted(pairs.items()):
+        missing = set(CONDITIONS) - set(cells)
         if missing:
             raise SystemExit(f"Pair {pair!r} is missing condition(s) {sorted(missing)}; "
-                             f"found {sorted(files.get('cells', {}))}")
-        # A companion for only one condition would silently give a volume-normalized plot
-        # with a whole condition missing, so require both or neither.
-        vol = files.get("volume", {})
-        if vol and set(vol) != set(CONDITIONS):
-            raise SystemExit(f"Pair {pair!r} has a companion volume file for "
-                             f"{sorted(vol)} but not {sorted(set(CONDITIONS) - set(vol))}")
+                             f"found {sorted(cells)}")
     return pairs
 
 
-def cell_ids(series):
-    """The per-cell UUID out of a FullName like ` M0:1:cel_<uuid>:ext_total`.
+def load_pair(cells):
+    """Load a pair's M0 and LPS analysis tables, across every batch, into one tidy frame.
 
-    The two files' FullName cannot be joined directly: they differ in the trailing `ext_`
-    tag -- `ext_total` in the companion file against `ext_Size > 0.15` in the analysis
-    table -- so the strings never match even for the same cell. The `cel_` UUID is the
-    shared part, and is unique per cell within one condition's export.
-    """
-    return series.astype(str).str.extract(r"(cel_[0-9a-f-]+)", expand=False)
+    Donor labels are prefixed with the batch here. The raw ids are not unique across
+    deliveries -- D1-D3 numbers its donors 1-3 -- and silently merging two donors would turn
+    n=6 back into n=3 with no error anywhere.
 
-
-def load_cell_volume(path):
-    """{cell UUID -> cell volume} from one companion `-per-cell.csv`."""
-    df = load_csv(path)
-    if CELL_VOLUME_COL not in df.columns:
-        raise SystemExit(f"{os.path.basename(path)} has no {CELL_VOLUME_COL!r} column; "
-                         f"it does not look like a companion volume file")
-    total = df[df["Extension"].astype(str).str.strip() == TOTAL_EXTENSION]
-    ids = cell_ids(total["FullName"])
-    if ids.isna().any() or ids.duplicated().any():
-        raise SystemExit(f"{os.path.basename(path)}: cell IDs in the {TOTAL_EXTENSION!r} "
-                         f"rows are missing or not unique")
-    return pd.Series(total[CELL_VOLUME_COL].values, index=ids.values)
-
-
-def load_pair(files):
-    """Load a pair's M0 and LPS analysis tables into one tidy frame.
-
-    When a companion volume file is present, each cell's volume is joined on in the same
-    pass. The join is done per condition and before the concat, so an M0 and an LPS cell
-    can never collide on a shared UUID.
+    CELL_SIZE_COL is required rather than treated as optional. It is missing from exactly
+    one export -- the superseded 20260908 D4-D6 delivery -- and its absence would otherwise
+    surface only as the normalized vesicle panel quietly disappearing from the output.
     """
     frames = []
     for cond in CONDITIONS:
-        df = load_csv(files["cells"][cond])
-        vol_path = files.get("volume", {}).get(cond)
-        if vol_path:
-            volumes = load_cell_volume(vol_path)
-            ids = cell_ids(df["FullName"])
-            unmatched = int((~ids.isin(volumes.index)).sum())
-            if unmatched:
+        for path, batch in cells[cond]:
+            df = load_csv(path)
+            if CELL_SIZE_COL not in df.columns:
                 raise SystemExit(
-                    f"{unmatched} of {len(df)} {cond} cells have no matching row in "
-                    f"{os.path.basename(vol_path)}; the two files are not the same cells")
-            df[CELL_VOLUME] = ids.map(volumes).values
-            # Distinct from an unmatched cell above: these cells are in both files, but
-            # the 3D cell segmentation failed on them, so they carry no volume. They drop
-            # out of the volume-normalized metric only.
-            no_vol = int(df[CELL_VOLUME].isna().sum())
-            if no_vol:
-                print(f"    ({no_vol} of {len(df)} {cond} cells have no 3D cell volume)")
-        frames.append(df)
+                    f"{os.path.basename(path)} has no {CELL_SIZE_COL!r} column. The "
+                    f"20260908 D4-D6 export dropped it; read D4-D6 from the 20260910 "
+                    f"chromatic-aberration re-export instead.")
+            df["Batch"] = batch
+            df["Donor"] = batch + ":" + df["Donor"].astype(str)
+            frames.append(df)
 
     data = pd.concat(frames, ignore_index=True)
     data["Condition"] = pd.Categorical(data["Condition"], categories=CONDITIONS,
                                        ordered=True)
     if data["Condition"].isna().any():
-        bad = load_csv(files["cells"]["M0"])["Condition"].unique()
-        raise ValueError(f"Unexpected condition labels (expected {CONDITIONS}): {bad}")
+        raise ValueError(f"Unexpected condition labels (expected {CONDITIONS})")
     return data
+
+
+def assign_donor_labels(frames):
+    """{batch-prefixed donor -> "D1", "D2", ...} over every pair, in batch then id order.
+
+    Computed once across all pairs rather than per pair, so that a donor carries the same
+    D-number and the same color in every figure, and so that a pair which happened to be
+    missing a donor could not silently shift the numbering of the others.
+
+    The raw ids are not comparable between deliveries (D1-D3 numbers its donors 1-3, D4-D6
+    identifies them as `bd26-46/52/53`), so the sort is on the batch-prefixed key; the
+    batch folder names are date-prefixed, so this orders the deliveries chronologically.
+    """
+    donors = sorted({d for f in frames for d in f["Donor"].unique()})
+    return {d: f"D{i}" for i, d in enumerate(donors, start=1)}
 
 
 def coloc_columns(data, metric):
@@ -292,7 +396,7 @@ def density(data, marker):
     the `size_gr 0.15` size gate, focus -- moves this number without any change in biology.
     That is what makes it a confounder for the coloc coefficients rather than just a covariate.
     """
-    return data[f"Numb. Ves. ({marker})"] / data["Masked Area (Physical Units)"]
+    return data[f"Numb. Ves. ({marker})"] / data[CELL_SIZE_COL]
 
 
 def _scope_row(pair, X, Y, col, g, scope, condition, donor):
@@ -313,7 +417,7 @@ def _scope_row(pair, X, Y, col, g, scope, condition, donor):
         "n_cells": int(ok.sum()), "n_strata": 1,
         "mean_density_numerator": density(g, X)[ok].mean(),
         "mean_density_denominator": dens_y.mean(),
-        "mean_cell_area": g.loc[ok, "Masked Area (Physical Units)"].mean(),
+        "mean_cell_area": g.loc[ok, CELL_SIZE_COL].mean(),
         "mean_coloc": g.loc[ok, col].mean(),
         "rho_coloc_vs_density_denominator": rho,
         "p_rho": pval,
@@ -349,7 +453,7 @@ def density_qc(pair, data, col, X, Y):
       within-donor effect and the pooled number is safe to use. Where it *disagrees*, the
       pooled correlation is a between-donor artifact -- Simpson's paradox -- and quoting it
       invites a reviewer who stratifies to get the opposite sign. In this dataset that
-      happens for `rab5 Fy2/Rab5` (pooled -0.28, within-donor +0.14). `p_rho` is NaN for
+      happens for `rab5 Fy2/Rab5` (pooled -0.11, within-donor +0.23). `p_rho` is NaN for
       these scopes: an average of rhos is not a test on one sample.
 
     None of these scopes, pooled or not, establishes that an M0/LPS coloc difference is
@@ -412,7 +516,7 @@ def density_scatter(pair, data, col, X, Y, qc_rows, outdir, palette):
     pooled = [r["rho_coloc_vs_density_denominator"] for r in qc_rows
               if r["scope"] == "pooled_all"]
 
-    out_svg = os.path.join(outdir, f"{pair}_{X}-{Y}_coloc_vs_density_{Y}.svg")
+    out_svg = os.path.join(outdir, f"coloc_{X}-to-{Y}_vs_density_{Y}.svg")
     plot_density_scatter(
         plot_data, x_col, col, out_svg, palette,
         title=f"{X}/{Y} — {len(plot_data)} cells, "
@@ -526,7 +630,7 @@ def process_direction(pair, data, col, X, Y, metric, aggs, outdir, palette):
     # coloc_density_qc.csv, which is now a sibling folder rather than a file to hunt for.
     return superplot(
         data, col, aggs, outdir, palette,
-        stem=f"{pair}_{X}-{Y}_coloc_{metric}",
+        stem=f"coloc_{X}-to-{Y}_{metric}",
         title_prefix=f"{X}/{Y}",
         ylabel=f"Coloc. ({X}/{Y}) per cell",
         ident={"pair": pair, "direction": f"{X}/{Y}", "numerator": X,
@@ -538,18 +642,19 @@ def process_direction(pair, data, col, X, Y, metric, aggs, outdir, palette):
 def process_direction_percent(pair, data, col, X, Y, metric, aggs, outdir, palette):
     """The same direction, with every cell as a percentage of its donor's own M0 summary.
 
-    Why this panel exists: the un-normalized version is dominated by a donor batch effect
-    (donor 1 > 2 > 3 in all six directions, up to 4x), which spreads the three donor dots
-    across the axis and leaves the M0->LPS step within each donor hard to see. Normalizing
-    puts every donor's M0 on exactly 100 so the shift reads directly.
+    Why this panel exists: the un-normalized version is dominated by a donor effect. Across
+    the six donors the M0 coloc spans up to 4.5x within a single direction (Fy1/Fy2: 0.07 to
+    0.30), which spreads the donor dots across the axis and leaves the M0->LPS step within
+    each donor hard to see. Normalizing puts every donor's M0 on exactly 100 so the shift
+    reads directly.
 
     The annotated P is deliberately the paired t-test on the **raw** donor means -- the same
     number the un-normalized panel shows. Normalizing would otherwise convert a difference
-    test into a ratio test and change every p-value (fy1 Fy1/Fy2: 0.054 -> 0.183), leaving
+    test into a ratio test and change every p-value (fy1 Fy1/Fy2: 0.037 -> 0.144), leaving
     two folders reporting different results for one comparison. The difference scale is also
     the better-specified model here: across donors the LPS effect is more consistent as an
-    absolute difference than as a ratio in 5 of the 6 directions. The ratio-scale test still
-    reaches the CSV via `test_override`, as `p_as_plotted`.
+    absolute difference than as a ratio in every direction that reaches significance. The
+    ratio-scale test still reaches the CSV via `test_override`, as `p_as_plotted`.
     """
     sub = data[data[col].notna()]
     # Keyed by agg: the reportable test is re-run per agg, exactly as summarize_donors is.
@@ -563,7 +668,7 @@ def process_direction_percent(pair, data, col, X, Y, metric, aggs, outdir, palet
         pct = sub.assign(**{pct_col: percent_of_control(sub, col, agg)})
         rows += superplot(
             pct, pct_col, [agg], outdir, palette,
-            stem=f"{pair}_{X}-{Y}_coloc_{metric}_percent_control",
+            stem=f"coloc_{X}-to-{Y}_{metric}_percent_control",
             title_prefix=f"{X}/{Y} (% of M0)",
             ylabel=f"Coloc. ({X}/{Y}), % of donor M0",
             ident={"pair": pair, "direction": f"{X}/{Y}", "numerator": X,
@@ -586,20 +691,35 @@ def primary_marker(data):
     raise ValueError("No 'Coloc. (X/Y)' column found; cannot identify the pair's marker")
 
 
+def normalized_count_col(marker):
+    """Name of the derived per-cell-size vesicle count for `marker`.
+
+    Shared by `vesicle_specs` and `process_vesicle_metrics` so the column one of them
+    derives is the one the other asks for.
+    """
+    return f"Numb. Ves. ({marker}) per cell area"
+
+
 def vesicle_specs(data, marker):
     """[(column, slug, title, ylabel)] for the per-cell abundance/size metrics.
 
-    Three panels, only reached when a companion volume file was found:
+    Three panels:
 
     - `Numb. Ves. (<marker>)` -- the raw segmented-object count. Extensive: a larger cell
-      holds more vesicles at the same density, so a shift here can be a shift in cell size.
-    - the same count divided by `Cell volume` -- intensive, and the one to read for "did
-      the condition change vesicle abundance". Only available with the companion file.
+      holds more vesicles at the same size, so a shift here can be a shift in cell size.
+    - the same count divided by CELL_SIZE_COL -- intensive, and the one to read for "did
+      the condition change vesicle abundance".
     - `Mean: Size : <marker>` -- mean segmented vesicle size, already intensive.
 
-    The normalized column is derived rather than read: the companion file carries cell
-    volume but not the counts, and the analysis table the reverse, so the ratio only
-    exists after the join in `load_pair`.
+    The middle panel is labelled per cell *area*, not per cell volume, because that is what
+    the denominator is: `Masked Area (Physical Units)` is the cell's masked footprint, and
+    the one column that could be called a volume is not comparable between the two
+    deliveries (see CELL_SIZE_COL). Within either delivery on its own the two differ only by
+    a constant factor, so this is the same panel a per-volume normalization would draw, on a
+    denominator that does not also encode which batch the donor came from.
+
+    The normalized column is derived rather than read: the exporter carries the count and
+    the masked area, but not their ratio.
     """
     count = f"Numb. Ves. ({marker})"
     size = f"Mean: Size : {marker}"
@@ -609,35 +729,37 @@ def vesicle_specs(data, marker):
 
     # Titles stay short -- the panel is pinned to a fixed width and the y-axis label
     # already carries the full quantity, so the title only has to name the panel.
-    norm = f"{count} per cell volume"
     return [
         (count, "count", f"{marker} count", f"{marker} vesicles per cell"),
-        (norm, "count_per_volume", f"{marker} count/vol",
-         f"{marker} vesicles per unit cell volume"),
+        (normalized_count_col(marker), "count_per_cell_area", f"{marker} count/area",
+         f"{marker} vesicles per unit cell area"),
         (size, "size", f"{marker} size", f"Mean {marker} vesicle size"),
     ]
 
 
 def process_vesicle_metrics(pair, data, aggs, outdir, palette):
-    """Save the abundance/size superplots for a pair's non-Fy2 marker.
-
-    Runs only for pairs that came with a companion volume file. The raw count and size
-    columns exist for every pair, but the point of this set of panels is the comparison
-    between the raw and the size-normalized count, and without a cell volume that
-    comparison is missing its middle term. Delivering the companion file for another pair
-    is therefore what opts it in -- nothing here is keyed to a pair by name.
-    """
-    if CELL_VOLUME not in data.columns:
-        print(f"  (no companion volume file for {pair}; skipping the vesicle metrics)")
-        return []
-
+    """Save the abundance/size superplots for a pair's non-Fy2 marker."""
     marker = primary_marker(data)
-    specs = vesicle_specs(data, marker)
 
-    norm_col = f"Numb. Ves. ({marker}) per cell volume"
+    norm_col = normalized_count_col(marker)
     # assign() rather than a plain assignment: `data` is reused by the coloc directions
     # and the density QC, and shouldn't collect derived columns.
-    data = data.assign(**{norm_col: data[f"Numb. Ves. ({marker})"] / data[CELL_VOLUME]})
+    data = data.assign(
+        **{norm_col: data[f"Numb. Ves. ({marker})"] / data[CELL_SIZE_COL]})
+
+    specs = vesicle_specs(data, marker)
+
+    # `load_pair` requires CELL_SIZE_COL, so this should no longer be reachable -- it stays
+    # because the failure it guards against is silent: a donor whose cells all lacked a size
+    # would put a 5-donor panel beside 6-donor ones with nothing on it to say so, which is
+    # exactly the quiet n-reduction this run exists to rule out. Drop the panel, and say why.
+    all_donors = set(data["Donor"].unique())
+    with_size = set(data.loc[data[norm_col].notna(), "Donor"].unique())
+    if with_size != all_donors:
+        missing = sorted(all_donors - with_size)
+        print(f"  (no cell size for donor(s) {missing}; skipping {marker} count/area "
+              f"so every panel keeps all {len(all_donors)} donors)")
+        specs = [spec for spec in specs if spec[1] != "count_per_cell_area"]
 
     rows = []
     for col, slug, title, ylabel in specs:
@@ -717,8 +839,8 @@ def print_donor_shift_check(qc):
     segmentation. A cell-level rho says the coefficient is density-sensitive; it does not say
     the conditions differed in density. Only this does.
 
-    Read the concordance count: 3/3 donors shifting coloc and density the same way means the
-    coloc difference and the segmentation difference are indistinguishable in this data.
+    Read the concordance count: all 6 donors shifting coloc and density the same way means
+    the coloc difference and the segmentation difference are indistinguishable in this data.
     Density moving the *opposite* way is the good case -- the coloc shift happened against
     the density gradient, so it cannot be explained by it.
     """
@@ -750,8 +872,10 @@ def print_donor_shift_check(qc):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--data-root", default=DEFAULT_DATA_ROOT,
-                        help="directory holding the six per-cell CSVs")
+    parser.add_argument("--data-root", action="append", default=None, metavar="DIR",
+                        help="directory holding per-cell CSVs; repeat to combine several "
+                             "deliveries into one run (donors are kept distinct per "
+                             "directory). Defaults to the D1-D3 and D4-D6 batches.")
     parser.add_argument("--outdir", default="plots", help="directory for plots & CSVs")
     # Mean, not median. The per-cell distributions are near-symmetric (median skewness
     # -0.03 across the 36 donor x condition x direction strata, excess kurtosis ~0) and
@@ -769,25 +893,52 @@ def main():
     parser.add_argument("--no-percent-control", dest="percent_control",
                         action="store_false",
                         help="skip the percent-of-donor-M0 colocalization superplots")
+    parser.add_argument("--no-density-qc", dest="density_qc", action="store_false",
+                        help="skip the coloc-vs-vesicle-density QC")
     args = parser.parse_args()
 
     aggs = AGGS if args.agg == "both" else [args.agg]
     metrics = list(METRIC_TOKENS) if args.metric == "both" else [args.metric]
 
+    roots = args.data_root or DEFAULT_DATA_ROOTS
+
     coloc_dir = subdir(args.outdir, COLOC_DIR)
-    qc_dir = subdir(args.outdir, DENSITY_QC_DIR)
+    qc_dir = subdir(args.outdir, DENSITY_QC_DIR) if args.density_qc else None
     vesicle_dir = subdir(args.outdir, VESICLE_DIR)
     percent_dir = subdir(args.outdir, PERCENT_CONTROL_DIR) if args.percent_control else None
-    pairs = discover_pairs(args.data_root)
+    pairs = discover_pairs(roots)
+
+    # Every pair is loaded before anything is plotted, so donor labels can be assigned once
+    # across the whole run rather than per pair -- see `assign_donor_labels`.
+    loaded = {pair: load_pair(cells) for pair, cells in sorted(pairs.items())}
+    donor_labels = assign_donor_labels(loaded.values())
+    for data in loaded.values():
+        data["Donor"] = data["Donor"].map(donor_labels)
+
+    # The D-numbers are what appear on the figures, so the mapping back to the delivery and
+    # the collaborator's own id is written out beside them rather than left in the console.
+    key = pd.DataFrame(sorted(donor_labels.items()), columns=["source", "donor"])
+    key[["batch", "raw_id"]] = key["source"].str.split(":", n=1, expand=True)
+    # The acquisition id out of FileName, which is what actually names the donor outside
+    # its own delivery. Taken over every pair, so a disagreement would show up as a list.
+    src = (pd.concat([d[["Donor", "SourceID"]] for d in loaded.values()])
+           .dropna().drop_duplicates()
+           .groupby("Donor")["SourceID"].apply(lambda v: "/".join(sorted(set(v)))))
+    key["file_id"] = key["donor"].map(src)
+    key = key[["donor", "batch", "raw_id", "file_id"]].sort_values("donor")
+    key.to_csv(os.path.join(args.outdir, "donor_key.csv"), index=False)
+    print(f"\n{len(key)} donors (written to donor_key.csv):")
+    print(key.to_string(index=False))
+
+    # One palette for the whole run, so a donor keeps its color across every figure.
+    palette = donor_palette(pd.DataFrame({"Donor": list(donor_labels.values())}))
 
     stat_rows, qc_rows, vesicle_rows, percent_rows = [], [], [], []
-    for pair, files in sorted(pairs.items()):
+    for pair, data in loaded.items():
         print(f"\n=== {pair} ===")
-        data = load_pair(files)
         print(f"  {len(data)} cells, "
               f"{data.groupby('Condition', observed=True).size().to_dict()}, "
               f"donors {sorted(data['Donor'].unique())}")
-        palette = donor_palette(data)
 
         for metric in metrics:
             for col, X, Y in coloc_columns(data, metric):
@@ -797,7 +948,7 @@ def main():
                 if percent_dir is not None:
                     percent_rows += process_direction_percent(
                         pair, data, col, X, Y, metric, aggs, percent_dir, palette)
-                if metric == "intensity":
+                if args.density_qc and metric == "intensity":
                     rows = density_qc(pair, data, col, X, Y)
                     qc_rows += rows
                     density_scatter(pair, data, col, X, Y, rows, qc_dir, palette)
