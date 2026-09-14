@@ -80,8 +80,10 @@ RAW_SUFFIX = "_raw-signal-intensity"
 
 # The single comparison and its volcano metrics (the "index_*" helper column is dropped).
 # The stimulus is named "TLR4", matching the stat columns of Data S1 and S2; the per-sample
-# columns keep the LPS_* names the assay used.
-COMPARISON = "TLR4 vs M0"
+# columns the assay named LPS_* ship as TLR4_* too.
+STIMULUS = "TLR4"
+ASSAY_STIMULUS_PREFIX = "LPS_"
+COMPARISON = f"{STIMULUS} vs M0"
 STAT_METRICS = ["log2_FC", "p_value", "-log10_pval", "-log10_pval_adj", "Regulation"]
 
 SHEET_NAME = "S3-1 Polar metabolites"
@@ -90,18 +92,27 @@ TITLE = (
     "(related to Figure 4 and Extended Data Fig. 3)"
 )
 DESCRIPTION = (
-    "Polar metabolite abundance values in macrophages stimulated with the TLR4 agonist LPS "
+    "Polar metabolite abundance values in TLR4 stimulated macrophages "
     "compared to M0 macrophages as determined by LC-MS/MS analysis. The channel ratio values "
     "after quantile regression imputation of left censored data (QRILC) are shown alongside raw "
     "signal intensity values and differential abundance calculations. Data are from n = 4 donors."
 )
 
 
+def sample_label(col):
+    """Shipped name of a per-sample column: the assay's ``LPS_`` prefix becomes ``TLR4_``."""
+    if col.startswith(ASSAY_STIMULUS_PREFIX):
+        return f"{STIMULUS}_{col.removeprefix(ASSAY_STIMULUS_PREFIX)}"
+    return col
+
+
 def load_values(csv, suffix):
     """Per-sample intensities keyed by Compound, sample columns tagged with ``suffix``."""
     df = pd.read_csv(require(csv))
     sample_cols = [c for c in df.columns if c != ID_COL]
-    return df[[ID_COL, *sample_cols]].rename(columns={c: f"{c}{suffix}" for c in sample_cols})
+    return df[[ID_COL, *sample_cols]].rename(
+        columns={c: f"{sample_label(c)}{suffix}" for c in sample_cols}
+    )
 
 
 def load_stats():

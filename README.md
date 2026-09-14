@@ -31,6 +31,7 @@ Per-modality folders, each with its own `README.md`:
 - `whole_proteome/`: unenriched proteome expression, volcano/GO downstream
 - `reactivity/`: cysteine reactivity (isoTOP-ABPP)
 - `ipms/`: endogenous IP-MS (interactomes, CRAPome filtering, Venn)
+- `pla/`: PLA region counts and IF colocalization superplots (M0 vs LPS)
 - `phosphoproteomics/`: phospho-site quantification, kinome, enrichment
 - `rna/`: DESeq2 normalization, RNA/GSEA
 - `metabolomics/`: metabolite abundance
