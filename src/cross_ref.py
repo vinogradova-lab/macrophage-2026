@@ -8,7 +8,7 @@ independent of which reactivity run is being annotated.
 The residue-level databases are large (AlphaMissense 1.4 GB, ClinVar 3.7 GB), so
 ``load_cys_cross_ref`` caches a small per-study table:
 
-    conda run -n polars python -m src.cross_ref --rebuild
+    conda run -n macrophage-2026 python -m src.cross_ref --rebuild
 
 The cache is keyed to the study's cysteines -- rebuild it whenever the reactivity run changes.
 

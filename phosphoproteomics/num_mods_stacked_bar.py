@@ -10,9 +10,9 @@ method comparison.
 Styling mirrors the lab's guide-RNA figure: legend on the right, despined axes,
 with outlines on the stacked boxes.
 
-Conda environment (the lab's ``polars`` env already has these):
+Conda environment (the ``macrophage-2026`` env already has these):
 
-    conda activate polars   # needs polars, matplotlib
+    conda activate macrophage-2026   # needs polars, matplotlib
 
 Usage:
 

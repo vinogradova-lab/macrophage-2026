@@ -1,4 +1,4 @@
-name: polars
+name: macrophage-2026
 channels:
   - conda-forge
   - bioconda

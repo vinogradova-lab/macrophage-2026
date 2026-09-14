@@ -21,7 +21,7 @@ the three visualization .Rmd files have written their go_enrich() CSVs (see the 
 S2-6 additionally needs phosphoproteomics.ipynb to have written the expression-normalized
 phosphorylation table to the manuscript tree (see PHOSPHO_TABLE_CSV).
 
-    conda run -n polars python whole_proteome/build_data_s2.py
+    conda run -n macrophage-2026 python whole_proteome/build_data_s2.py
 """
 
 import re

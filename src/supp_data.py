@@ -25,14 +25,14 @@ An assay script imports the two names it needs:
     sheets = [SuppSheet(1, SHEET_NAME, TITLE, DESCRIPTION, build_table())]
     write_supplementary_workbook(REPO_ROOT / "Data S1.xlsx", sheets)
 
-and is run in the `polars` env, as `rna/build_data_s1.py` and its siblings are:
+and is run in the `macrophage-2026` env, as `rna/build_data_s1.py` and its siblings are:
 
-    conda run -n polars python rna/build_data_s1.py
+    conda run -n macrophage-2026 python rna/build_data_s1.py
 
 Run this module directly to write a two-sheet demo workbook and verify it - a formatting smoke
 test that needs no assay data, and the quickest way to eyeball the style in Excel:
 
-    conda run -n polars python src/supp_data.py --out "Data S0 demo.xlsx"
+    conda run -n macrophage-2026 python src/supp_data.py --out "Data S0 demo.xlsx"
 """
 
 import argparse

@@ -5,7 +5,7 @@ QRILC-imputed intensities, and M0-vs-LPS stats).
 Targeted polar dMRM assay: one comparison (M0 vs LPS), 179 metabolites, 4 donors. Run after
 metabolomics_analysis.ipynb has generated the combined-files and volcano tables.
 
-    conda run -n polars python metabolomics/build_data_s3.py
+    conda run -n macrophage-2026 python metabolomics/build_data_s3.py
 """
 
 import sys

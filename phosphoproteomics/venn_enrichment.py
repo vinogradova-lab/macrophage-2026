@@ -16,9 +16,9 @@ experiment (d2=TZ3-114, d3=TZ3-116, d1=TZ3-117, d5=TZ3-121); the ``donor`` colum
 carries this, while the trailing 1/2/3 of ``technical_replicate`` is within-donor
 replication and is not counted here.
 
-Conda environment (the lab's ``polars`` env already has these):
+Conda environment (the ``macrophage-2026`` env already has these):
 
-    conda activate polars   # needs polars, matplotlib, matplotlib-venn
+    conda activate macrophage-2026   # needs polars, matplotlib, matplotlib-venn
 
 Usage:
 

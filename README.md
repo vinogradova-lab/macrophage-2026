@@ -6,14 +6,14 @@ self-contained folder pairing a Python processing notebook with an R (`.Rmd`) fi
 ## 1. Environment
 
 ```bash
-conda env create -f environment.yml   # env "polars" (Python 3.13)
-conda activate polars
+conda env create -f environment.yml   # env "macrophage-2026" (Python 3.13)
+conda activate macrophage-2026
 nbstripout --install --attributes .gitattributes   # strip notebook outputs on commit
 ```
 
 `environment.yml` pins deps and installs `src/` via `-e .` (see `setup.py`), so
 `import src.uniprot_utils` etc. work from any notebook. Register the kernel if needed:
-`python -m ipykernel install --user --name polars`.
+`python -m ipykernel install --user --name macrophage-2026`.
 
 R is used for the `.Rmd` figure steps and Fisher GO enrichment. Install the packages sourced by
 `macrophage_figure_setting.R` (notably `msigdbr` 26.1.0, `clusterProfiler`, `ggplot2`, `tidyverse`).
@@ -49,5 +49,4 @@ Functional gene-list curation and Fisher GO enrichment share one ontology source
   from these sets.
 
 Caveats: `GO:0006914` (autophagy) and `GO:0006096` (glycolysis) aren't MSigDB gene sets, so they
-resolve via the term-name tokens `"autophagy"` / `"glycolytic"`. The `simplify()` step in
-`go_enrich()` still uses 2021 `org.Hs.eg.db`/`GO.db` IC for semantic tie-breaking only.
+resolve via the term-name tokens `"autophagy"` / `"glycolytic"`.

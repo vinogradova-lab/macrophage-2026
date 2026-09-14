@@ -1,4 +1,4 @@
-""" Use conda env "polars"
+""" Use conda env "macrophage-2026"
 
 Collects a raw p-value and log2 fold change for target proteins across four modalities
 (protein/TMT, RNA-seq, western blot, qPCR) into one tidy CSV. Source files are read-only.

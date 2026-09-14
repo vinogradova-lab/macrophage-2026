@@ -7,7 +7,7 @@ Zhang) read-only from the Figure 1 panels folder, with the same TLR1->TLR1-2 rel
 ``whole_proteome/multi_modal_significance.py``. ``DE_M0high_rd.xlsx`` is excluded (no
 counterpart in the other modalities), and with it the ``M0 High`` samples.
 
-    conda run -n polars python rna/build_data_s1.py
+    conda run -n macrophage-2026 python rna/build_data_s1.py
 """
 
 import sys
@@ -45,6 +45,10 @@ PAR_Y_SUFFIX = "_PAR_Y"
 # Sequenced and deposited, but not a comparison here (see DE_M0high_rd.xlsx above).
 EXCLUDED_STIMULUS = "M0 High"
 
+# The control's manifest/GEO name, and the name it is displayed under in this workbook.
+CONTROL_SRC_LABEL = "M0 Low"
+CONTROL_LABEL = "M0"
+
 # Genes on alt/fix/random contigs are dropped: they duplicate primary-assembly genes under a
 # second ensembl.gene.id, each quantified in only some comparisons. No gene is annotated on
 # both a canonical and a non-canonical contig, so this drops whole genes, never half of one.
@@ -58,8 +62,8 @@ TITLE = (
 DESCRIPTION = (
     "Differential gene expression analysis was performed with DESeq2, using its median-of-ratios "
     "method to normalize RNA counts. Genes with zero mapped reads were excluded from display. "
-    "Each stimulus was compared against the unstimulated low-vehicle control, written M0 in the "
-    "statistics columns and M0 Low in the count columns.  Normalized counts for each stimulus and donor are shown to the right of the "
+    "Each stimulus was compared against M0 (denoted M0_Low in the corresponding GEO submission). "
+    " Normalized counts for each stimulus and donor are shown to the right of the "
     "differential expression statistics. Genes are the union across the seven comparisons. Genes are restricted to the primary assembly. Data are from n = 3 donors."
 )
 
@@ -79,9 +83,10 @@ def load_sample_labels():
     manifest = pd.read_csv(require(SAMPLE_MANIFEST), sep="\t")
     manifest = manifest[manifest["src_label"] != EXCLUDED_STIMULUS]
     manifest = manifest.sort_values(["cond_num", "donor"], kind="stable")
-    labels = dict(
-        zip(manifest["column_name"], manifest["src_label"] + "_" + manifest["donor"])
-    )
+    # The control is "M0 Low" in the GEO manifest (it pairs with the dropped "M0 High"); here it
+    # is the only control, so the count columns carry the same "M0" the stat columns use.
+    src_label = manifest["src_label"].replace({CONTROL_SRC_LABEL: CONTROL_LABEL})
+    labels = dict(zip(manifest["column_name"], src_label + "_" + manifest["donor"]))
     # Two samples collapsing onto one name would silently drop a column.
     assert len(set(labels.values())) == len(labels), "sample labels are not unique"
     return labels
