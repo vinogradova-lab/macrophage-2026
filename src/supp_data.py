@@ -114,9 +114,12 @@ def _same_cell(got, want):
     """Whether a cell read back from Excel is the value that was written.
 
     Not `==`: Excel stores a float to 15 significant digits, so 1.2345678901234567 reads back
-    as ...66, and a pandas `Timestamp` comes back as a plain `datetime`. Both are faithful
-    round trips, and neither compares equal.
+    as ...66, a pandas `Timestamp` comes back as a plain `datetime`, and an empty string comes
+    back as None because Excel has no empty string -- openpyxl writes it as a blank cell. All
+    three are faithful round trips, and none compares equal.
     """
+    if want == "" and got is None:
+        return True
     if isinstance(want, pd.Timestamp):
         want = want.to_pydatetime()
     if isinstance(want, bool) or isinstance(got, bool):

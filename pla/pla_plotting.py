@@ -79,6 +79,9 @@ MEAN_BAR_HALF = MEAN_BAR_WIDTH_IN / _PER_UNIT_IN / 2
 # identically whether the axis is pinned by `ylim` or fitted to the data, so every panel
 # gets the same proportional gap and they stay comparable side by side.
 AXIS_PAD_FRAC = 0.05
+# Axis space added *above* a caller-pinned `ylim` to hold the P annotation, as a fraction
+# of that range.
+ANNOTATION_HEADROOM = 0.16
 DONOR_MARKER_DIAM = 4.5  # donor-summary dots, swarmplot `size` (points)
 # Outline width for those dots. Deliberately not LINE_WIDTH: that is the axis-spine weight,
 # and at 0.25pt the black ring is too fine to separate a donor dot from the cell cloud behind
@@ -406,14 +409,16 @@ def plot_swarm(data, donor_means, grand, metric, out_svg, palette, title, ylabel
         axis_lo, axis_hi = lo - span * AXIS_PAD_FRAC, None  # top grown to fit the P below
         y_bar, text_gap = hi + span * 0.06, span * 0.02
     else:
-        # Reserve the top of the fixed range for the annotation rather than growing the axis.
+        # Put the annotation in headroom *above* the fixed range, not inside the top of it.
         axis_span = ylim[1] - ylim[0]
-        axis_lo, axis_hi = ylim[0] - axis_span * AXIS_PAD_FRAC, ylim[1]
-        y_bar, text_gap = ylim[0] + axis_span * 0.93, axis_span * 0.015
-        if hi > y_bar:
+        axis_lo = ylim[0] - axis_span * AXIS_PAD_FRAC
+        axis_hi = ylim[1] + axis_span * ANNOTATION_HEADROOM
+        y_bar = ylim[1] + axis_span * ANNOTATION_HEADROOM * 0.30
+        text_gap = axis_span * 0.015
+        if hi > ylim[1]:
             raise ValueError(
-                f"{metric!r} reaches {hi:.3g}, which collides with the P annotation at "
-                f"{y_bar:.3g}; ylim={ylim} is too tight for this data")
+                f"{metric!r} reaches {hi:.3g}, outside the fixed range ylim={ylim}; the "
+                f"caller pins that range as one the data cannot leave")
 
     y_top = hi
     if not np.isnan(pval):
@@ -424,6 +429,9 @@ def plot_swarm(data, donor_means, grand, metric, out_svg, palette, title, ylabel
     # swarmplot resets the axes data limits to its own points (the donor summaries), which
     # drops every per-cell dot outside that range off the plot -- so set the range by hand.
     ax.set_ylim(axis_lo, y_top if axis_hi is None else axis_hi)
+    if axis_hi is not None:
+        # Ticks span the data range only.
+        ax.set_yticks(np.linspace(ylim[0], ylim[1], 5))
     # After swarmplot, which resets the x range to its own categorical default.
     ax.set_xlim(*CONDITION_XLIM)
 

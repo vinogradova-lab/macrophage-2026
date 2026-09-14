@@ -39,10 +39,14 @@ from src.cross_ref import (  # noqa: E402
     AM_BENIGN,
     AM_PATHOGENIC,
     CLINVAR_RESIDUE_TOLERANCE,
+    PPSE_BURIED,
+    PPSE_INTERMEDIATE,
     am_class,
     conservation_bin,
     load_complex_membership,
     load_cys_cross_ref,
+    load_ppse,
+    ppse_class,
 )
 from src.macrophage import (  # noqa: E402
     CONDITIONS,
@@ -125,15 +129,18 @@ RC_DESCRIPTION = (
     "Per-condition columns list one value per residue in the 'residue' column, '|'-separated; "
     "'(C1;C2)' marks a change that could not be attributed to a single residue and counts once. "
     "The cross-reference columns on the right describe only the cysteines that change: complex "
-    "membership (CORUM, ComplexPortal), conservation depth (out of 102 organisms), AlphaMissense "
-    f"pathogenicity (pathogenic > {AM_PATHOGENIC}, benign < {AM_BENIGN}), and pathogenic ClinVar "
-    f"variants within {CLINVAR_RESIDUE_TOLERANCE} residues."
+    "membership (CORUM, ComplexPortal), conservation depth (out of 102 organisms), AlphaFold "
+    f"solvent accessibility (pPSE; buried > {PPSE_BURIED}, intermediate > {PPSE_INTERMEDIATE}) "
+    f"and secondary structure, AlphaMissense pathogenicity (pathogenic > {AM_PATHOGENIC}, benign "
+    f"< {AM_BENIGN}), and pathogenic ClinVar variants within {CLINVAR_RESIDUE_TOLERANCE} residues."
 )
 
 RC_LEAD_COLS = ["uniprot", "protein", "description", "rc_n_peptides", "sequence", "residue"]
 # Cross-reference block, to the right of the per-condition blocks, in funnel order:
 # complex membership -> conservation -> AlphaMissense -> ClinVar. Each annotation gets a
 # protein-level summary (filterable) plus a residue-keyed detail string (lossless).
+# pPSE sits after conservation, matching the alluvial plot's column order; it is an annotation
+# only -- the funnel has no solvent-accessibility tier.
 RC_CROSS_REF_COLS = [
     "complex_membership",
     "corum_complexes",
@@ -141,6 +148,10 @@ RC_CROSS_REF_COLS = [
     "max_conservation_depth",
     "conservation_bin",
     "conservation_by_residue",
+    "max_pPSE",
+    "ppse_class",
+    "ppse_by_residue",
+    "structure_group_by_residue",
     "max_am_pathogenicity",
     "am_class",
     "am_pathogenicity_by_residue",
@@ -220,6 +231,13 @@ PHOSPHO_BP_GO_CSV = PHOSPHO_DIR / "go_bp_phospho.csv"
 # A reactivity analysis despite the folder: visualization.Rmd's "# Reactivity enrichment" chunk
 # runs it over reactivity-change proteins and writes it relative to its own working directory.
 RC_CC_GO_CSV = PHOSPHO_DIR / "go_cc_reactivity.csv"
+# The GO:BP companion to RC_CC_GO_CSV, restricted to the TLR4 reactivity changes; written by
+# rc_visualization.Rmd into the Figure 2 panel folder rather than into the repo.
+RC_BP_GO_CSV = (
+    MANUSCRIPT / "02_Figures/6-figure format_EV"
+    / "Figure 2_Reactivity_part1_GTPase regulation/Panels/go_enrichment"
+    / "go_results.csv"
+)
 IPMS_GO_CSV = (
     MANUSCRIPT / "02_Figures/6-figure format_EV"
     / "Figure 5/Panels/Tbck_IP_GO-term_crapome_filter/go_term_results.csv"
@@ -466,9 +484,8 @@ def build_cross_ref_block(rc_wide):
     cysteine to clear every filter the way the funnel's residue-level cascade does -- on the
     current data the two agree, but the residue columns are what settle it.
 
-    Counts here run higher than the funnel's: it annotates behind a .drop_nulls() that discards a
-    residue missing any of conservation/pPSE/AlphaMissense, and its stored Complex call is
-    CORUM-only, whereas ``complex_membership`` follows cell 38's code and ORs in ComplexPortal.
+    The funnel in reactivity_polars.ipynb cell 42 calls back into src/cross_ref.py rather than
+    reimplementing any of this, so its tiers and these columns agree by construction.
     """
     changed = rc_change_positions(rc_wide)
     cache = load_cys_cross_ref()
@@ -483,23 +500,44 @@ def build_cross_ref_block(rc_wide):
             clinvar_n[key] = row["clinvar_pathogenic_variants"]
             clinvar_pheno[key] = row["clinvar_phenotypes"]
 
+    # pPSE is not in the cache (it is not a funnel input), so read it here. Keyed per position,
+    # unlike the alluvial table in reactivity_polars.ipynb cell 39, which can only key on the
+    # first cysteine of a "C364,C369" peptide -- so these columns are the more complete of the two.
+    ppse, structure = {}, {}
+    for row in load_ppse(rc_wide["uniprot"]).iter_rows(named=True):
+        key = (row["uniprot"], row["pos"])
+        if row["pPSE"] is not None:
+            ppse[key] = row["pPSE"]
+        if row["structure_group"] is not None:
+            structure[key] = row["structure_group"]
+
     rows = []
     for uniprot in rc_wide["uniprot"]:
         positions = changed.get(uniprot, set())
         cons = {p: conservation[(uniprot, p)] for p in positions if (uniprot, p) in conservation}
         am = {p: pathogenicity[(uniprot, p)] for p in positions if (uniprot, p) in pathogenicity}
         cv = {p: clinvar_n[(uniprot, p)] for p in positions if (uniprot, p) in clinvar_n}
+        pse = {p: ppse[(uniprot, p)] for p in positions if (uniprot, p) in ppse}
+        sse = {p: structure[(uniprot, p)] for p in positions if (uniprot, p) in structure}
         phenotypes = sorted(
             {clinvar_pheno[(uniprot, p)] for p in positions if (uniprot, p) in clinvar_pheno}
         )
         max_cons = max(cons.values(), default=None)
         max_am = max(am.values(), default=None)
+        # max = the most buried of the changing cysteines, so the binned call answers "is any of
+        # them buried?" the way conservation_bin/am_class answer their own questions.
+        max_ppse = max(pse.values(), default=None)
         rows.append(
             {
                 "uniprot": uniprot,
                 "max_conservation_depth": max_cons,
                 "conservation_bin": conservation_bin(max_cons),
                 "conservation_by_residue": _residue_detail(positions, cons, "{:.0f}"),
+                "max_pPSE": max_ppse,
+                "ppse_class": ppse_class(max_ppse),
+                "ppse_by_residue": _residue_detail(positions, pse, "{:.1f}"),
+                # No scalar summary: a secondary-structure label cannot be maxed.
+                "structure_group_by_residue": _residue_detail(positions, sse),
                 "max_am_pathogenicity": max_am,
                 "am_class": am_class(max_am),
                 "am_pathogenicity_by_residue": _residue_detail(positions, am, "{:.4f}"),
@@ -633,7 +671,20 @@ def load_reactivity_cc_go():
     df = pd.read_csv(path)
     df = df[(df["adjusted_p_value"] < 0.2) & (df["n_proteins"] > 5)]
     return _tag_go(df, "Reactivity", "Reactive proteins localization (GO:CC)", GO_BG_ALL,
-                   figure="Figure 2b")
+                   figure="Figure 3b")
+
+
+def load_reactivity_bp_go():
+    """S2-4: TLR4 reactive proteins, GO:BP over-representation (all-annotated background).
+
+    The GO:BP counterpart to load_reactivity_cc_go(), over the TLR4 subset of the reactivity
+    changes rather than all stimuli (see RC_BP_GO_CSV).
+    """
+    path = require(RC_BP_GO_CSV, "Re-run reactivity/rc_visualization.Rmd (GO:BP enrichment chunk).")
+    df = pd.read_csv(path)
+    df = df[(df["adjusted_p_value"] < 0.05) & (df["n_proteins"] > 5)]
+    return _tag_go(df, "Reactivity", "TLR4 reactive proteins (GO:BP)", GO_BG_ALL,
+                   figure="Figure 2c")
 
 
 def load_ipms_mf_go():
@@ -666,6 +717,7 @@ def build_go_enrichment():
         load_cross_omics_go(),
         load_phospho_bp_go(),
         load_reactivity_cc_go(),
+        load_reactivity_bp_go(),
         load_ipms_mf_go(),
     ]
     out = pd.concat(blocks, ignore_index=True)

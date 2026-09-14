@@ -59,14 +59,8 @@ DESCRIPTION = (
     "Differential gene expression analysis was performed with DESeq2, using its median-of-ratios "
     "method to normalize RNA counts. Genes with zero mapped reads were excluded from display. "
     "Each stimulus was compared against the unstimulated low-vehicle control, written M0 in the "
-    "statistics columns and M0 Low in the count columns; the high-vehicle control (M0 High) was "
-    "sequenced and deposited but is not a comparison in this table, so its samples are not "
-    "shown. Normalized counts for each stimulus and donor are shown to the right of the "
-    "differential expression statistics. Genes are the union across the seven comparisons: a "
-    "gene left blank throughout a comparison, baseMean included, was not tested in it, whereas a "
-    "gene with a baseMean but no adjusted p value was tested and removed by DESeq2's independent "
-    "filtering. Genes are restricted to the primary assembly; annotations on alternate, fix and "
-    "random contigs are not shown. Data are from n = 3 donors."
+    "statistics columns and M0 Low in the count columns.  Normalized counts for each stimulus and donor are shown to the right of the "
+    "differential expression statistics. Genes are the union across the seven comparisons. Genes are restricted to the primary assembly. Data are from n = 3 donors."
 )
 
 
